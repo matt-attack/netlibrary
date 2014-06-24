@@ -133,9 +133,9 @@ struct NetMsg
 		this->cursize += l + 1;
 	}
 
-	void ReadString(char* str)
+	void ReadString(char* str, unsigned int count)
 	{
-		strcpy(str, &this->data[readpos]);
+		strncpy(str, &this->data[readpos], count);
 		int l = strlen(str);
 
 		this->readpos += l + 1;

@@ -60,7 +60,7 @@ DWORD WINAPI NetConnection::net_thread(void* data)
 							netlog("got Connection Denied response!\n");
 
 							char reason[500];
-							msg.ReadString(reason);
+							msg.ReadString(reason, 500);
 
 							//check and read error message if is valid at all
 							netlogf("Reason was: %s\n", reason);

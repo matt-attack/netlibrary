@@ -191,7 +191,6 @@ int _tmain(int argc, _TCHAR* argv[])
 				{
 					assert(((int*)buffer)[i] == data2[num][i]);
 				}
-				//printf("one good\n");
 			}
 			else
 			{
@@ -228,8 +227,6 @@ int _tmain(int argc, _TCHAR* argv[])
 					{
 						assert(((int*)buffer)[i] == data[i]);
 					}
-					//printf("one good\n");
-					//break;
 				}
 				else
 				{
@@ -272,8 +269,6 @@ int _tmain(int argc, _TCHAR* argv[])
 					{
 						assert(((int*)buffer)[i] == data[i]);
 					}
-					//printf("one good\n");
-					//break;
 				}
 				else
 				{
@@ -311,8 +306,6 @@ int _tmain(int argc, _TCHAR* argv[])
 					{
 						assert(((int*)buffer)[i] == data[i]);
 					}
-					//printf("one good\n");
-					//break;
 				}
 				else
 				{
@@ -356,8 +349,6 @@ int _tmain(int argc, _TCHAR* argv[])
 						{
 							assert(((int*)buffer)[i] == data[i]);
 						}
-						//printf("one good\n");
-						//break;
 					}
 					else
 					{

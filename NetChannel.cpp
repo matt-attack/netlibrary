@@ -73,6 +73,9 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 
 	if (rsequence == -1)//OOB
 	{
+		if (recvsize < 4)
+			return;//bad packet
+
 		netlog("[Client] Got OOB packet\n");
 		Packet p;
 		//make copy of data
@@ -164,7 +167,7 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 			}
 		}
 	}
-	else
+	else//safe
 	{
 		//check if the packet is complete if fragmented
 		rsequence &= ~(1<<31);
@@ -179,6 +182,9 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 
 			if (rsequence & 1<<29)
 			{
+				if (recvsize < 19)
+					return;//bad packet
+
 				rsequence &= ~(1<<29);
 				unsigned char chan = *(unsigned char*)&buffer[12];
 				unsigned short seq = *(unsigned short*)&buffer[13];
@@ -247,6 +253,9 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 			}
 			else
 			{
+				if (recvsize < 16)
+					return;//bad packet
+
 				int frag = *(unsigned short*)&buffer[12];
 				int numfrags = *(unsigned short*)&buffer[14];
 
@@ -287,10 +296,13 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 				}
 			}
 		}
-		else
+		else//safe
 		{
 			if (rsequence & 1<<29)
 			{
+				if (recvsize < 17)
+					return;//bad packet
+
 				netlog("[NetChan] Got Ordered Reliable Packet\n");
 				//size at 15
 				//chan at 12
@@ -329,6 +341,9 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 			}
 			else
 			{
+				if (recvsize < 14)
+					return;//bad packet
+
 				netlog("[Client] Got Reliable packet\n");
 
 				//not split packet, or ordered
@@ -345,6 +360,9 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 
 bool NetChannel::ProcessHeader(char* data, int size)//this processes the header of incoming packets
 {
+	if (size < 4)
+		return false;//bad packet
+
 	int rsequence = *(int*)&data[0];
 	int ack, ackbits;
 	if (rsequence == -1)
@@ -354,8 +372,11 @@ bool NetChannel::ProcessHeader(char* data, int size)//this processes the header 
 	}
 	else if (rsequence & (1<<31))
 	{
+		if (size < 12)
+			return false;//bad packet
+
 		//record that we got it
-		rsequence &= ~(1<<31);
+		rsequence &= ~(1<<31);//get rid of reliable flag
 		rsequence &= ~(1<<30);//get rid of fragment flag
 		rsequence &= ~(1<<29);//get rid of ordered flag
 
@@ -407,6 +428,9 @@ bool NetChannel::ProcessHeader(char* data, int size)//this processes the header 
 	}
 	else
 	{
+		if (size < 8)
+			return false;//bad packet
+
 		ack = rsequence;
 		ackbits = *(int*)&data[4];
 		//first 4, last received sequence
