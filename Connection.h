@@ -85,6 +85,8 @@ public:
 	virtual char* CanConnect(Address addr, ConnectionRequest* p) = 0;
 };
 
+#include <memory>
+
 //ok, the following IDs are taken for OOB packets
 //99 disconnect
 //98 ack/keep alive
@@ -332,6 +334,11 @@ public:
 	void Send(Peer* client, char* data, unsigned int size, bool OOB = false);
 
 	//delete returned buffer when done
+	/*std::unique_ptr<Packet> Receive()
+	{
+		return std::make_unique<Packet>();
+	}*/
+
 	char* Receive(Peer*& sender, int& size)
 	{
 		if (this->incoming.size() == 0)

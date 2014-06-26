@@ -24,6 +24,8 @@ int _tmain(int argc, _TCHAR* argv[])
 
 	srand(GetTickCount());
 
+	Peer* sender; int size;
+
 	NetConnection connection;
 	connection.Open(5008);
 
@@ -79,7 +81,31 @@ int _tmain(int argc, _TCHAR* argv[])
 		Sleep(1);
 	}
 
-	printf("Connections closed successfully\n");
+	printf("Connections closed successfully\n\n");
+
+	printf("Doing Security Test\n");
+	 
+	for (int i = 0; i < 50; i++)
+	{
+		char* buffer = new char[i*6];
+		for (int in = 0; in < i*6; in++)
+		{
+			buffer[in] = rand();
+		}
+		connection.connection.Send(connection.peers.begin()->second->connection.remoteaddr, buffer, i*6);
+		delete[] buffer;
+	}
+
+	Sleep(1000);//wait to receive messages
+
+	//get all messages out
+	char* out;
+	while (out = server.Receive(sender, size))
+	{
+		delete[] out;
+	}
+	printf("Well, we didnt crash, so security test probably didn't fail...\n\n");
+	
 
 	connection.connection.SetRTT(0.05);
 	connection.connection.SetDrop(0.1);
@@ -138,7 +164,6 @@ int _tmain(int argc, _TCHAR* argv[])
 
 
 	//ok, now check
-	Peer* sender; int size;
 	num = 0;
 	while (num < 20)
 	{

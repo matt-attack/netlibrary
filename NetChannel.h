@@ -56,6 +56,7 @@ struct Fragment
 {
 	char* data;
 	int frags_recieved;
+	int num_frags;
 	int sequence;
 	int curpos;//used for split packets
 };
@@ -242,6 +243,13 @@ private:
 
 	inline void ProcessAck(int ack, int ackbits)
 	{
+		//error check
+		if (ack > this->sequence)
+		{
+			netlog("[NetChan] ERROR: Got ack larger than was ever sent!!\n");
+			return;
+		}
+
 		//process primary ack number
 		if (ack > this->last_acked)
 		{

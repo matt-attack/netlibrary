@@ -67,7 +67,7 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 	bool shoulduse = this->ProcessHeader(buffer, recvsize);
 	if (shoulduse == false)
 	{
-		//netlog("[Client] Got duplicate or really old packet, dropping!\n");
+		netlog("[NetChan] Dropped packet, for any number of reasons!\n");
 		return;
 	}
 
@@ -103,6 +103,14 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 			if (packetsize & 1<<15)
 			{
 				packetsize &= ~(1<<15);
+
+				//range check
+				if (packetsize + 5 + ptr > recvsize)
+				{
+					netlog("[NetChan] ERROR: Got packetsize that is too large!! Malformed packet!!\n");
+					break;
+				}
+
 				NetMsg msg2 = NetMsg(2048, &buffer[ptr+2]);
 
 				byte sequence = msg2.ReadByte();
@@ -126,7 +134,7 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 					if (this->unreliable_fragment.data)
 						delete[] this->unreliable_fragment.data;
 
-					this->unreliable_fragment.data = new char[numfrags*FRAGMENT_SIZE];
+					this->unreliable_fragment.data = new char[numfrags*NET_FRAGMENT_SIZE];
 					this->unreliable_fragment.sequence = sequence;
 					this->unreliable_fragment.frags_recieved = 1;
 					this->unreliable_fragment.curpos = packetsize;
@@ -154,6 +162,13 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 			}
 			else
 			{
+				//range check
+				if (packetsize + 2 + ptr > recvsize)
+				{
+					netlog("[NetChan] ERROR: Got packetsize that is too large!! Malformed packet!!\n");
+					break;
+				}
+
 				netlogf("	Got packet of %d bytes at %d\n", packetsize, ptr);
 				Packet p;
 				p.reliable = false;
@@ -191,6 +206,17 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 				int frag = *(unsigned short*)&buffer[15];
 				int numfrags = *(unsigned short*)&buffer[17];
 
+				if (frag + 1 > numfrags)
+				{
+					netlog("[NetChan] ERROR: Fragment number over maximum number of fragments!\n");
+					return;
+				}
+				else if (numfrags > NET_MAX_FRAGMENTS)
+				{
+					netlog("[NetChan] ERROR: Fragmented packet too large, over NET_MAX_FRAGMENTS!\n");
+					return;
+				}
+
 				netlog("was ordered split reliable packet\n");
 
 				netlogf("[Client] Got reliable split packet %d of %d\n", frag+1, numfrags);
@@ -209,13 +235,13 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 
 					//first packet we got in the set
 					reliable_frags[startseq%20].frags_recieved = 1;
-					reliable_frags[startseq%20].data = new char[FRAGMENT_SIZE*numfrags];
+					reliable_frags[startseq%20].data = new char[NET_FRAGMENT_SIZE*numfrags];
 					reliable_frags[startseq%20].sequence = startseq;
 					reliable_frags[startseq%20].curpos = 0;
 				}
 
 				//ok, copy in the data
-				memcpy(reliable_frags[startseq%20].data+frag*FRAGMENT_SIZE, &buffer[16+3], recvsize - 19);
+				memcpy(reliable_frags[startseq%20].data+frag*NET_FRAGMENT_SIZE, &buffer[16+3], recvsize - 19);
 				reliable_frags[startseq%20].curpos += recvsize - 19;
 
 				if (reliable_frags[startseq%20].frags_recieved == numfrags)
@@ -275,13 +301,13 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 
 					//first packet we got in the set
 					reliable_frags[startseq%20].frags_recieved = 1;
-					reliable_frags[startseq%20].data = new char[FRAGMENT_SIZE*numfrags];
+					reliable_frags[startseq%20].data = new char[NET_FRAGMENT_SIZE*numfrags];
 					reliable_frags[startseq%20].sequence = startseq;
 					reliable_frags[startseq%20].curpos = 0;
 				}
 
 				//ok, copy in the data
-				memcpy(reliable_frags[startseq%20].data+frag*FRAGMENT_SIZE, &buffer[16], recvsize - 16);
+				memcpy(reliable_frags[startseq%20].data+frag*NET_FRAGMENT_SIZE, &buffer[16], recvsize - 16);
 				reliable_frags[startseq%20].curpos += recvsize - 16;
 
 				if (reliable_frags[startseq%20].frags_recieved == numfrags)
@@ -361,7 +387,10 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 bool NetChannel::ProcessHeader(char* data, int size)//this processes the header of incoming packets
 {
 	if (size < 4)
+	{
+		netlog("[NetChan] ERROR: Packet size too small!! Possible interference/corruption!\n");
 		return false;//bad packet
+	}
 
 	int rsequence = *(int*)&data[0];
 	int ack, ackbits;
@@ -373,12 +402,21 @@ bool NetChannel::ProcessHeader(char* data, int size)//this processes the header 
 	else if (rsequence & (1<<31))
 	{
 		if (size < 12)
+		{
+			netlog("[NetChan] ERROR: Packet size too small!! Possible interference/corruption!\n");
 			return false;//bad packet
+		}
 
 		//record that we got it
 		rsequence &= ~(1<<31);//get rid of reliable flag
 		rsequence &= ~(1<<30);//get rid of fragment flag
 		rsequence &= ~(1<<29);//get rid of ordered flag
+
+		if (rsequence > this->recieved_sequence + 33)
+		{
+			netlog("[NetChan] ERROR: Incoming sequence number too high! Packet possibly corrupted!\n");
+			return false;
+		}
 
 		//lets fill acks
 		if (rsequence > this->recieved_sequence)
@@ -429,7 +467,10 @@ bool NetChannel::ProcessHeader(char* data, int size)//this processes the header 
 	else
 	{
 		if (size < 8)
+		{
+			netlog("[NetChan] ERROR: Packet size too small!! Possible interference/corruption!\n");
 			return false;//bad packet
+		}
 
 		ack = rsequence;
 		ackbits = *(int*)&data[4];
@@ -474,8 +515,8 @@ void NetChannel::SendPackets()//actually sends to the server
 			{
 				//put in fragment
 				int left2send = pack.size - ptr;
-				int size = FRAGMENT_SIZE;
-				if (left2send < FRAGMENT_SIZE)
+				int size = NET_FRAGMENT_SIZE;
+				if (left2send < NET_FRAGMENT_SIZE)
 					size = left2send;
 				msg.WriteShort(size | (1<<15));//msb high to signal split data
 				msg.WriteByte(this->split_sequence);
@@ -486,7 +527,7 @@ void NetChannel::SendPackets()//actually sends to the server
 
 				netlogf("	Inserting Fragment size %d at %d\n", size, ptr);
 
-				ptr += FRAGMENT_SIZE;
+				ptr += NET_FRAGMENT_SIZE;
 
 				frag++;
 
@@ -500,7 +541,7 @@ void NetChannel::SendPackets()//actually sends to the server
 				else
 					break;//only one fragment per packet
 			}
-			else if ((pack.size + msg.cursize - 8) <= FRAGMENT_SIZE)
+			else if ((pack.size + msg.cursize - 8) <= NET_FRAGMENT_SIZE)
 			{
 				netlogf("	Inserting Packet size %d at %d\n", pack.size, msg.cursize);
 				//write size of packet
@@ -514,13 +555,13 @@ void NetChannel::SendPackets()//actually sends to the server
 			else
 			{
 				//this is broken atm, would provide better packing
-				if ((pack.size) > FRAGMENT_SIZE && msg.cursize == 8)//dont put half a packet if we can avoid it
+				if ((pack.size) > NET_FRAGMENT_SIZE && msg.cursize == 8)//dont put half a packet if we can avoid it
 				{
 					//netlogf("[%s] Unreliable message too large (%d bytes), need to split.\n", this->server ? "Server" : "Client", pack.size);
 					//lets just fill the rest of this packet, and pop out a new one
-					int sizeleft = FRAGMENT_SIZE - (msg.cursize-8);//dont count header bits
-					numfrags = pack.size/FRAGMENT_SIZE+1;//should be generally right
-					if ((sizeleft + (numfrags-1)*FRAGMENT_SIZE) < pack.size)
+					int sizeleft = NET_FRAGMENT_SIZE - (msg.cursize-8);//dont count header bits
+					numfrags = pack.size/NET_FRAGMENT_SIZE+1;//should be generally right
+					if ((sizeleft + (numfrags-1)*NET_FRAGMENT_SIZE) < pack.size)
 						numfrags++;
 
 					//use size bits to store id, change size bits to ushort, no reason for longer
@@ -597,7 +638,7 @@ void NetChannel::SendReliables()//actually sends to the server
 					msg.WriteShort(window[i].fragment);
 					msg.WriteShort(window[i].numfragments);
 
-					msg.WriteData(window[i].data+window[i].fragment*FRAGMENT_SIZE, (window[i].size - window[i].fragment*FRAGMENT_SIZE) < FRAGMENT_SIZE ? window[i].size - window[i].fragment*FRAGMENT_SIZE : FRAGMENT_SIZE);
+					msg.WriteData(window[i].data+window[i].fragment*NET_FRAGMENT_SIZE, (window[i].size - window[i].fragment*NET_FRAGMENT_SIZE) < NET_FRAGMENT_SIZE ? window[i].size - window[i].fragment*NET_FRAGMENT_SIZE : NET_FRAGMENT_SIZE);
 				}
 				else
 				{
@@ -627,9 +668,9 @@ void NetChannel::SendReliables()//actually sends to the server
 
 	bool fragmented = false;
 	int numfrags = 1;
-	if (this->reliable_sending.front().size > FRAGMENT_SIZE)
+	if (this->reliable_sending.front().size > NET_FRAGMENT_SIZE)
 	{
-		numfrags = this->reliable_sending.front().size/FRAGMENT_SIZE + 1;
+		numfrags = this->reliable_sending.front().size/NET_FRAGMENT_SIZE + 1;
 		fragmented = true;
 	}
 	int fragment = 0;
@@ -717,7 +758,7 @@ void NetChannel::SendReliables()//actually sends to the server
 			//write size of packet
 			if (fragmented)
 			{
-				msg.WriteData(pack.data+fragment*FRAGMENT_SIZE, (pack.size - fragment*FRAGMENT_SIZE) < FRAGMENT_SIZE ? pack.size - fragment*FRAGMENT_SIZE : FRAGMENT_SIZE);
+				msg.WriteData(pack.data+fragment*NET_FRAGMENT_SIZE, (pack.size - fragment*NET_FRAGMENT_SIZE) < NET_FRAGMENT_SIZE ? pack.size - fragment*NET_FRAGMENT_SIZE : NET_FRAGMENT_SIZE);
 			}
 			else
 			{

@@ -150,6 +150,12 @@ DWORD WINAPI NetConnection::net_thread(void* data)
 				//new connection
 				/* just use username at first, then add passwords eventually */
 				ConnectionRequest* p = (ConnectionRequest*)(buffer+4);
+				if (p->packid != 97)
+				{
+					netlog("[NetCon] Got invalid connection request!\n");
+					continue;
+				}
+
 				char* msg = connection->CanConnect(sender, p);
 				if (msg == 0)//no error message
 				{
