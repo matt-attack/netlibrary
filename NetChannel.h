@@ -1,21 +1,9 @@
 #ifndef _NET_CHANNEL_
 #define _NET_CHANNEL_
 
-/*#define _CRTDBG_MAP_ALLOC
-#include <crtdbg.h>
-
-
-#ifdef _DEBUG   
-#ifndef DBG_NEW      
-#define DBG_NEW new ( _NORMAL_BLOCK , __FILE__ , __LINE__ )     
-#define new DBG_NEW   
-#endif
-#endif*/
-
 #include <queue>
 #include <thread>
 #include <map>
-#include <Windows.h>
 
 #include "Sockets.h"
 #include "NetDefines.h"
@@ -77,7 +65,7 @@ class NetChannel
 	bool acks[32];//stores if we got last 32 packets
 	RPacket window[33];//sliding window of reliable packets
 
-	byte split_sequence;
+	unsigned char split_sequence;
 	int sequence, recieved_sequence, last_acked;
 	int unsent_acks;
 
@@ -179,8 +167,6 @@ public:
 	}*/
 	void SendOOB(char* data, int size)
 	{
-		//if (server == false)
-			//netlog("[Client] Sent OOB packet\n");
 		//need to form the packet
 		char* tmp = new char[size+4];
 		NetMsg msg(size+4,tmp);
@@ -237,7 +223,7 @@ private:
 	//little wrapper to keep track of stuff, use me
 	inline void Send(const Address& addr, const char* data, const int size)
 	{
-		this->lastsendtime = GetTickCount();//keeps track of how often to send keep alives
+		this->lastsendtime = NetGetTime();//keeps track of how often to send keep alives
 		this->connection->Send(addr, data, size);
 	}
 

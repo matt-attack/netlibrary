@@ -22,7 +22,7 @@ int _tmain(int argc, _TCHAR* argv[])
 {
 	_CrtSetDbgFlag ( _CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
 
-	srand(GetTickCount());
+	srand(NetGetTime());
 
 	Peer* sender; int size;
 
@@ -35,6 +35,32 @@ int _tmain(int argc, _TCHAR* argv[])
 	connection.connection.SetRTT(0);
 	connection.connection.SetDrop(0);
 	connection.connection.SetVariance(0);
+
+	printf("Doing Connection Security Test\n");
+
+	for (int i = 0; i < 50; i++)
+	{
+		char* buffer = new char[i*6];
+		for (int in = 0; in < i*6; in++)
+		{
+			buffer[in] = rand();
+		}
+		connection.connection.Send(Address(127,0,0,1,5007), buffer, i*6);
+		delete[] buffer;
+	}
+
+	NetSleep(1000);//wait to receive messages
+
+	//get all messages out
+	char* out;
+	while (out = server.Receive(sender, size))
+	{
+		delete[] out;
+	}
+	if (server.peers.size() != 0)
+		printf("Connection security test failed!!!\n\n");
+	else
+		printf("Connection security test passed.\n\n");
 
 	auto t = std::thread([](NetConnection* server)
 	{
@@ -78,13 +104,13 @@ int _tmain(int argc, _TCHAR* argv[])
 	{
 		Peer* s; int size;
 		server.Receive(s, size);
-		Sleep(1);
+		NetSleep(1);
 	}
 
 	printf("Connections closed successfully\n\n");
 
 	printf("Doing Security Test\n");
-	 
+
 	for (int i = 0; i < 50; i++)
 	{
 		char* buffer = new char[i*6];
@@ -96,16 +122,16 @@ int _tmain(int argc, _TCHAR* argv[])
 		delete[] buffer;
 	}
 
-	Sleep(1000);//wait to receive messages
+	NetSleep(1000);//wait to receive messages
 
 	//get all messages out
-	char* out;
+	//char* out;
 	while (out = server.Receive(sender, size))
 	{
 		delete[] out;
 	}
 	printf("Well, we didnt crash, so security test probably didn't fail...\n\n");
-	
+
 
 	connection.connection.SetRTT(0.05);
 	connection.connection.SetDrop(0.1);
@@ -400,7 +426,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	printf("Disconnection successful!\n");
 
 	//while (true)
-	Sleep(10000);
+	NetSleep(10000);
 
 	return 0;
 }

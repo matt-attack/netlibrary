@@ -11,7 +11,7 @@
 #endif
 #endif*/
 
-#ifndef ANDROID
+#ifdef _WIN32
 #ifndef INCLUDEDSOCK
 #define INCLUDEDSOCK
 #endif
@@ -23,18 +23,12 @@
 #include <fcntl.h>
 #include <errno.h>
 
-typedef unsigned int DWORD;
-typedef int SOCKET;
-
 #include <android/log.h>
 #include <jni.h>
 #include <string.h>
 #endif
 
 #include <queue>
-
-
-
 
 //uncomment and change these for simulation of bad network conditions
 #define NETSIMULATE
@@ -142,8 +136,8 @@ class Socket
 public:
 	unsigned int received;
 	unsigned int sent;
-	Socket();
 
+	Socket();
 	~Socket();
 
 	bool Open( unsigned short port );
@@ -190,7 +184,7 @@ private:
 	int variance;
 #endif
 
-#ifdef ANDROID
+#ifndef _WIN32
 	int socket;
 #else
 	unsigned int socket;
@@ -203,10 +197,10 @@ public:
 	int received;
 
 	SocketTCP();
-#ifndef ANDROID
+#ifdef _WIN32
 	SocketTCP(unsigned int sock);
 #else
-	SocketTCP(SOCKET& soc);
+	SocketTCP(int soc);
 #endif
 
 	~SocketTCP();

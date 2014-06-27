@@ -177,8 +177,8 @@ public:
 
 		//build handshake packet
 		ConnectionRequest p;
-		p.packid = 97;
-		p.id = PROTOCOL_ID;
+		p.packid = NetConnectionRequest;
+		p.id = NET_PROTOCOL_ID;
 		strncpy(p.plyname, name, 50);
 		if (password)
 			strncpy(p.password, password, 50);
@@ -196,7 +196,7 @@ public:
 
 			netlogf("trying to connect to %i.%i.%i.%i:%u\n", (int)peer->connection.remoteaddr.GetA(), (int)peer->connection.remoteaddr.GetB(), (int)peer->connection.remoteaddr.GetC(), (int)peer->connection.remoteaddr.GetD(), (unsigned int)peer->connection.remoteaddr.GetPort());
 
-			Sleep(1000);//wait for answer
+			NetSleep(1000);//wait for answer
 
 			//ok, check state of the new connection
 			if (peer->connection.state == PEER_CONNECTED)
@@ -214,7 +214,7 @@ public:
 				//need to get reason back
 				if (status)
 					status[0] = "Connection was denied.";
-				Sleep(1000);
+				NetSleep(1000);
 
 				//remove the peer
 				this->threadmutex.lock();
@@ -256,7 +256,7 @@ public:
 		}
 		if (status)
 			status[0] = "Connection Failed After 4 Retries.";
-		Sleep(1000);
+		NetSleep(1000);
 
 		this->threadmutex.lock();
 
@@ -278,7 +278,7 @@ public:
 		if (peer)
 		{
 			//todo
-			char id = 99;
+			char id = NetDisconnect;
 			//disconnect packet id
 			peer->connection.SendOOB((char*)&id, 1);
 
@@ -304,7 +304,7 @@ public:
 			{
 				if (p.second->connection.state == PEER_CONNECTED)
 				{
-					char id = 99;
+					char id = NetDisconnect;
 					//disconnect packet id
 					p.second->connection.SendOOB((char*)&id, 1);
 				}
@@ -372,7 +372,7 @@ public:
 				char t[500];
 				NetMsg msg(500,t);
 				//msg.WriteInt(-1);
-				msg.WriteInt(MAGIC_ID);//magic
+				msg.WriteInt(NET_MAGIC_ID);//magic
 				msg.WriteByte(1);//success
 				msg.WriteShort(5007);//my port number, todo, changeme
 				peer->connection.SendOOB(t, msg.cursize);
@@ -434,7 +434,7 @@ private:
 
 	char* CanConnect(Address addr, ConnectionRequest* p)
 	{
-		if (p->id != PROTOCOL_ID)
+		if (p->id != NET_PROTOCOL_ID)
 			return "Bad Protocol ID";
 
 		if (this->observer)
@@ -443,7 +443,7 @@ private:
 		return 0;
 	}
 
-	static DWORD WINAPI net_thread(void* data);
+	static void net_thread(void* data);
 
 public:
 	std::map<Address, Peer*> peers;

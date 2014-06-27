@@ -1,7 +1,9 @@
 #include "Sockets.h"
 
+#ifdef _WIN32
 #define _CRTDBG_MAP_ALLOC
 #include <crtdbg.h>
+#endif
 
 #ifdef _DEBUG   
 #ifndef DBG_NEW      
@@ -11,18 +13,28 @@
 #endif
 
 #include <stdio.h>
+#include <stdlib.h>
+
+#include "NetDefines.h"
+
 //always include winsock before windows!!!!!
-#ifdef WINDOWS
+#ifdef _WIN32
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 #include <Windows.h>
 
 #pragma comment (lib, "Ws2_32.lib")
+#else
+#include <netdb.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <errno.h>
 #endif
 
 bool NetworkInit()
 {
-#ifdef WINDOWS
+#ifdef _WIN32
 	WSAData wsaData;
 	int retval;
 	if ((retval = WSAStartup(MAKEWORD(2,2), &wsaData)) != 0)
@@ -39,7 +51,7 @@ bool NetworkInit()
 
 bool NetworkCleanup()
 {
-#ifdef WINDOWS
+#ifdef _WIN32
 	WSACleanup();
 #endif
 	return true;
@@ -76,6 +88,7 @@ Address::Address(char* address, unsigned short port)
 static bool initialized = false;
 Socket::Socket()
 {
+#ifdef _WIN32
 	if (!initialized)
 	{
 		WSAData wsaData;
@@ -89,6 +102,7 @@ Socket::Socket()
 		}
 		initialized = true;
 	}
+#endif
 #ifdef NETSIMULATE
 	this->rtt = 0;
 	this->variance = 0;
@@ -136,7 +150,7 @@ bool Socket::Open( unsigned short port )
 
 	if ( bind( socket, (const sockaddr*) &address, sizeof(sockaddr_in) ) < 0 )
 	{
-#ifdef WINDOWS
+#ifdef _WIN32
 		int err = WSAGetLastError();
 		printf("Failed to Bind Socket, %i\n", err);//OutputDebugString( "failed to bind socket\n" );
 #endif
@@ -145,7 +159,7 @@ bool Socket::Open( unsigned short port )
 	}
 
 	// set non-blocking i
-#ifdef WINDOWS
+#ifdef _WIN32
 	DWORD nonBlocking = 1;
 	if ( ioctlsocket( socket, FIONBIO, &nonBlocking ) != 0 )
 	{
@@ -165,7 +179,7 @@ void Socket::Close()
 {
 	if ( socket != 0 )
 	{
-#ifdef WINDOWS
+#ifdef _WIN32
 		closesocket( socket );
 #else
 		close(socket);
@@ -231,7 +245,7 @@ bool Socket::Send( const Address & destination, const void * data, int size )
 		p.addr = destination;
 		p.data = new char[size];
 		p.size = size;
-		p.sendtime = GetTickCount() + delay;
+		p.sendtime = NetGetTime() + delay;
 		memcpy(p.data, data, size);
 		this->lagged.push(p);
 	}
@@ -250,7 +264,7 @@ void Socket::SendLaggedPackets()
 	while (this->lagged.empty() == false)
 	{
 		laggedpacket ii = this->lagged.top();//front();
-		if (GetTickCount() >= ii.sendtime)
+		if (NetGetTime() >= ii.sendtime)
 		{
 			sockaddr_in address;
 			address.sin_family = AF_INET;
@@ -326,6 +340,7 @@ void Socket::LeaveGroup(const char* multicastGroup)
 
 SocketTCP::SocketTCP()
 {
+#ifdef _WIN32
 	if (!initialized)
 	{
 		WSAData wsaData;
@@ -339,18 +354,19 @@ SocketTCP::SocketTCP()
 		}
 		initialized = true;
 	}
+#endif
 	received = 0;
 	socket = 0;
 }
 
-#ifndef ANDROID
+#ifdef _WIN32
 SocketTCP::SocketTCP(unsigned int sock)
 {
 	received = 0;
 	socket = sock;
 }
 #else
-SocketTCP::SocketTCP(SOCKET sock)
+SocketTCP::SocketTCP(int sock)
 {
 	received = 0;
 	socket = sock;
@@ -366,7 +382,7 @@ bool SocketTCP::SetNonBlocking( bool enable)
 {
 	if (enable)
 	{
-#ifdef WINDOWS
+#ifdef _WIN32
 		DWORD nonBlocking = 1;
 		if ( ioctlsocket( socket, FIONBIO, &nonBlocking ) != 0 )
 		{
@@ -380,7 +396,7 @@ bool SocketTCP::SetNonBlocking( bool enable)
 	}
 	else
 	{
-#ifdef WINDOWS
+#ifdef _WIN32
 		DWORD nonBlocking = 0;
 		if ( ioctlsocket( socket, FIONBIO, &nonBlocking ) != 0 )
 		{
@@ -425,7 +441,15 @@ bool SocketTCP::Connect( const char* address, const char* protocol)
 	memset(&req, 0, sizeof(req));
 	req.ai_family = AF_UNSPEC;
 	req.ai_socktype = SOCK_STREAM;
-	if (getaddrinfo(address, protocol, &req, &res) < 0)
+
+	const char* proto = protocol;
+#ifndef _WIN32
+	if (strcmp(protocol, "http") == 0)
+	{
+		proto = "80";//for linux and wutnot
+	}
+#endif
+	if (getaddrinfo(address, proto, &req, &res) < 0)
 	{
 		perror("getaddrinfo");
 		return false;
@@ -447,7 +471,11 @@ bool SocketTCP::Connect( const char* address, const char* protocol)
 	if (connect(socket, res->ai_addr, res->ai_addrlen) < 0)
 	{
 		perror("connect");
+#ifndef _WIN32
+		close(socket);
+#else
 		closesocket(socket);
+#endif
 		return false;
 	}
 
@@ -478,7 +506,7 @@ bool SocketTCP::Connect( Address server )
 	}
 
 	// set non-blocking i
-#ifdef WINDOWS
+#ifdef _WIN32
 	DWORD nonBlocking = 1;
 	if ( ioctlsocket( socket, FIONBIO, &nonBlocking ) != 0 )
 	{
@@ -515,7 +543,7 @@ SocketTCP* SocketTCP::Accept(Address& sender)//returns sock if successful, and s
 	tv.tv_usec = 0;
 	if (select(1, &rfds, 0, 0, &tv))
 	{
-		SOCKET n = accept( socket, (sockaddr*) &address, &size);
+		int n = accept( socket, (sockaddr*) &address, &size);
 		if (n != 0)
 		{
 			//closesocket(this->socket);
@@ -531,14 +559,14 @@ SocketTCP* SocketTCP::Accept(Address& sender)//returns sock if successful, and s
 		}
 		else
 		{
-#ifdef WINDOWS
+#ifdef _WIN32
 			fprintf(stderr, "Error accepting %d\n",WSAGetLastError());
 #endif
 		}
 	}
 	else
 	{
-#ifdef WINDOWS
+#ifdef _WIN32
 		fprintf(stderr, "Error accepting %d\n",WSAGetLastError());
 #endif
 	}
@@ -564,7 +592,7 @@ bool SocketTCP::Listen(unsigned short port)
 
 	if ( bind( socket, (const sockaddr*) &address, sizeof(sockaddr_in) ) < 0 )
 	{
-#ifdef WINDOWS
+#ifdef _WIN32
 		printf( "failed to bind socket\n" );
 		fprintf(stderr, "bind() failed, Error: %d\n", WSAGetLastError());
 #endif
@@ -644,7 +672,7 @@ bool SocketTCP::Open( Address & server, unsigned short port )
 
 	if ( connect(socket, (const sockaddr*) &address, sizeof(sockaddr_in)) < 0)
 	{
-#ifdef WINDOWS
+#ifdef _WIN32
 		OutputDebugStringA( "failed to connect socket\n" );
 #endif
 		Close();
@@ -652,7 +680,7 @@ bool SocketTCP::Open( Address & server, unsigned short port )
 	}
 
 	// set non-blocking i
-#ifdef WINDOWS
+#ifdef _WIN32
 	DWORD nonBlocking = 1;
 	if ( ioctlsocket( socket, FIONBIO, &nonBlocking ) != 0 )
 	{
@@ -674,13 +702,13 @@ void SocketTCP::Close()
 	if ( socket != 0 )
 	{
 		//log("TCP Connection Closed...\n");
-#ifdef WINDOWS
+#ifdef _WIN32
 		if(closesocket( socket ) != 0)
 #else
 		if(close(socket) != 0)
 #endif
 		{
-#ifdef WINDOWS
+#ifdef _WIN32
 			fprintf(stderr, "closesocket() failed, Error: %d\n", WSAGetLastError());
 #endif
 		}

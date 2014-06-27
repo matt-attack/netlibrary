@@ -150,13 +150,13 @@ struct NetMsg
 		//this->readpos += p;
 	}
 
-	char* ReadData(int size)
+	/*char* ReadData(int size)
 	{
 		char* d = new char[size];
 		memcpy(d, &this->data[this->readpos], size);
 		this->readpos += size;
 		return d;
-	};
+	};*/
 
 	void ReadData(char* dest, int size)
 	{

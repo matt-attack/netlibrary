@@ -1,6 +1,8 @@
 
+#ifdef _WIN32
 #define _CRTDBG_MAP_ALLOC
 #include <crtdbg.h>
+#endif
 
 #ifdef _DEBUG   
 #ifndef DBG_NEW      
@@ -76,11 +78,8 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 		if (recvsize < 4)
 			return;//bad packet
 
-		netlog("[Client] Got OOB packet\n");
+		netlogf("[%s] Got OOB packet\n", this->server ? "Server" : "Client");
 		Packet p;
-		//make copy of data
-		//char* copy = new char[recvsize - 4];
-		//memcpy(copy, &buffer[4], recvsize - 4);
 		p.size = recvsize - 4;
 		p.data = new char[p.size];
 		memcpy(p.data, &buffer[4], p.size);
@@ -99,7 +98,6 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 			unsigned short packetsize = *(unsigned short*)&buffer[ptr];
 			//packetsize = msg.ReadInt();
 
-			//todo: fragmenting
 			if (packetsize & 1<<15)
 			{
 				packetsize &= ~(1<<15);
@@ -113,9 +111,9 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 
 				NetMsg msg2 = NetMsg(2048, &buffer[ptr+2]);
 
-				byte sequence = msg2.ReadByte();
-				byte frag = msg2.ReadByte();
-				byte numfrags = msg2.ReadByte();
+				unsigned char sequence = msg2.ReadByte();
+				unsigned char frag = msg2.ReadByte();
+				unsigned char numfrags = msg2.ReadByte();
 
 				netlogf("	Got unreliable split packet %d of %d\n", frag+1, numfrags);
 				if (sequence == this->unreliable_fragment.sequence)
@@ -208,7 +206,7 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 
 				if (frag + 1 > numfrags)
 				{
-					netlog("[NetChan] ERROR: Fragment number over maximum number of fragments!\n");
+					netlog("[NetChan] ERROR: Fragment number over maximum number of fragments for set!\n");
 					return;
 				}
 				else if (numfrags > NET_MAX_FRAGMENTS)
@@ -491,7 +489,7 @@ void NetChannel::SendPackets()//actually sends to the server
 	if (this->sending.empty() == true)
 		return;
 
-	this->lastsendtime = GetTickCount();
+	this->lastsendtime = NetGetTime();
 
 	int ptr = 0;
 	int frag = 0;
@@ -591,16 +589,16 @@ void NetChannel::SendPackets()//actually sends to the server
 void NetChannel::SendReliables()//actually sends to the server
 {
 	//ok, lets check if we need to resend anything
-	bool recieved = false;
+	bool received = false;
 	for (int i = 32; i >= 0; i--)
 	{ 
 		if (window[i].recieved == false && window[i].data)
 		{
-			//if we got a packet after this one and still havent
-			//recieved, we should resend
-			if ((recieved == true && window[i].resends == 0) || (window[i].sendtime + 1000 < GetTickCount()))
+			//if we got a ack for packet after this one and still havent
+			//received ack for this one, we should resend
+			if ((received == true && window[i].resends == 0) || (window[i].sendtime + 1000 < NetGetTime()))
 			{
-				this->lastsendtime = GetTickCount();
+				this->lastsendtime = NetGetTime();
 
 				//netlogf("[%s] Resending sequence %d\n", this->server ? "Server" : "Client", window[i].sequence);
 
@@ -618,7 +616,7 @@ void NetChannel::SendReliables()//actually sends to the server
 				if (fragmented)
 					seq |= 1<<30;//this signifies split packet
 
-				if (window[i].channel != -1)
+				if (window[i].channel != -1)//sequence channel -1 = unsequenced
 					seq |= 1<<29;
 
 				//dont send this if not reliable
@@ -646,7 +644,7 @@ void NetChannel::SendReliables()//actually sends to the server
 					msg.WriteData(window[i].data, window[i].size);
 				}
 
-				window[i].sendtime = GetTickCount()-500;//resend faster
+				window[i].sendtime = NetGetTime()-500;//resend faster
 				window[i].resends += 1;
 
 				this->unsent_acks = 0;
@@ -655,7 +653,7 @@ void NetChannel::SendReliables()//actually sends to the server
 		}
 		else if (window[i].recieved == true && window[i].data)
 		{
-			recieved = true;
+			received = true;
 		}
 	}
 
@@ -678,7 +676,7 @@ void NetChannel::SendReliables()//actually sends to the server
 	//check if we are in the middle of sending packet
 	if (window[mw].data && window[mw].fragment + 1 != window[mw].numfragments)
 	{
-		netlog("we were in the middle of sending split packet, try and send more\n");
+		//netlog("we were in the middle of sending split packet, try and send more\n");
 		fragment = window[mw].fragment+1;
 	}
 
@@ -703,7 +701,7 @@ void NetChannel::SendReliables()//actually sends to the server
 			return;//we havent gotten ack on 31st packet, so cant slide
 		}
 
-		this->lastsendtime = GetTickCount();
+		this->lastsendtime = NetGetTime();
 
 		char d[2056];
 		NetMsg msg(2056,d);
@@ -737,7 +735,7 @@ void NetChannel::SendReliables()//actually sends to the server
 		window[mw].recieved = false;
 		window[mw].data = this->reliable_sending.front().data;
 		window[mw].size = this->reliable_sending.front().size;
-		window[mw].sendtime = GetTickCount();
+		window[mw].sendtime = NetGetTime();
 		window[mw].sequence = this->sequence;
 		window[mw].resends = 0;
 		window[mw].fragment = fragment;

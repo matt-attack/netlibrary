@@ -1,6 +1,9 @@
 
+#ifdef _WIN32
 #define _CRTDBG_MAP_ALLOC
 #include <crtdbg.h>
+#endif
+
 #include "Connection.h"
 
 #ifdef _DEBUG   
@@ -12,7 +15,7 @@
 
 #define _CRTDBG_MAP_ALLOC
 
-DWORD WINAPI NetConnection::net_thread(void* data)
+void NetConnection::net_thread(void* data)
 {
 	netlog("Network thread started!\n");
 	NetConnection* connection = (NetConnection*)data;
@@ -43,9 +46,9 @@ DWORD WINAPI NetConnection::net_thread(void* data)
 					int seq = msg.ReadInt();//should be -1
 					int magic = msg.ReadInt();
 
-					if (magic == MAGIC_ID && seq == -1)
+					if (magic == NET_MAGIC_ID && seq == -1)
 					{
-						byte status = msg.ReadByte();
+						unsigned char status = msg.ReadByte();
 						if (status == 1)
 						{
 							netlog("all good, got connection success response\n");
@@ -75,13 +78,13 @@ DWORD WINAPI NetConnection::net_thread(void* data)
 					continue;//done with this packet
 				}
 
-				client->connection.lastreceivetime = GetTickCount();
+				client->connection.lastreceivetime = NetGetTime();
 
 				int rsequence = *(int*)&buffer[0];
 				if (rsequence == -1)
 				{//is OOB packet
 					//read in command packets
-					if (buffer[4] == 99)//packetid of 99 is disconnect
+					if (buffer[4] == NetDisconnect)//packetid of 99 is disconnect
 					{
 						TPacket p;
 						p.data = 0;
@@ -102,7 +105,7 @@ DWORD WINAPI NetConnection::net_thread(void* data)
 
 						//connection->peers.erase(connection->peers.find(sender));//delete me
 					}
-					else if (buffer[4] == 98)
+					else if (buffer[4] == NetPing)
 					{
 						//netlog("[NetCon] got keep alive/ack packet\n");
 
@@ -110,7 +113,7 @@ DWORD WINAPI NetConnection::net_thread(void* data)
 						int ackbits = *(int*)&buffer[9];
 						client->connection.ProcessAck(ack, ackbits);
 					}
-					else if (buffer[4] == 97)//is another connection request packet, ignore it)
+					else if (buffer[4] == NetConnectionRequest)//is another connection request packet, ignore it)
 					{
 						netlog("[NetCon] Got connection request packet while still connected\n");
 					}
@@ -150,7 +153,7 @@ DWORD WINAPI NetConnection::net_thread(void* data)
 				//new connection
 				/* just use username at first, then add passwords eventually */
 				ConnectionRequest* p = (ConnectionRequest*)(buffer+4);
-				if (p->packid != 97)
+				if (p->packid != NetConnectionRequest)
 				{
 					netlog("[NetCon] Got invalid connection request!\n");
 					continue;
@@ -201,7 +204,7 @@ DWORD WINAPI NetConnection::net_thread(void* data)
 						char buf[150];
 						NetMsg nmsg = NetMsg(150, buf);
 						nmsg.WriteInt(-1);//OOB
-						nmsg.WriteInt(MAGIC_ID);//id
+						nmsg.WriteInt(NET_MAGIC_ID);//id
 						nmsg.WriteByte(69);//tell it we failed
 						nmsg.WriteString(msg);
 						connection->connection.Send(sender, nmsg.data, nmsg.cursize);
@@ -218,7 +221,7 @@ DWORD WINAPI NetConnection::net_thread(void* data)
 		for (auto ii: connection->peers)
 		{
 			int lastsendtime = ii.second->connection.lastsendtime;
-			if ((lastsendtime + 1000 < GetTickCount() || ii.second->connection.unsent_acks > 16) && ii.second->connection.state == PEER_CONNECTED)
+			if ((lastsendtime + NET_PING_INTERVAL < NetGetTime() || ii.second->connection.unsent_acks > 16) && ii.second->connection.state == PEER_CONNECTED)
 			{
 				//send keep alive packet, with acks
 				//if (ii.second->connection.unsent_acks > 16)
@@ -230,7 +233,7 @@ DWORD WINAPI NetConnection::net_thread(void* data)
 
 				char buffer[500];
 				NetMsg msg(500, buffer);
-				msg.WriteByte(98);
+				msg.WriteByte(NetPing);
 
 				//write acks
 				msg.WriteInt(ii.second->connection.recieved_sequence);
@@ -238,10 +241,10 @@ DWORD WINAPI NetConnection::net_thread(void* data)
 
 				ii.second->connection.SendOOB(buffer, msg.cursize);
 
-				ii.second->connection.lastsendtime = GetTickCount();
+				ii.second->connection.lastsendtime = NetGetTime();
 			}
 
-			if (ii.second->connection.lastreceivetime < GetTickCount() - 115000 && ii.second->connection.state == PEER_CONNECTED)
+			if (ii.second->connection.lastreceivetime < NetGetTime() - 115000 && ii.second->connection.state == PEER_CONNECTED)
 			{
 				//player timed out
 				netlog("whoops\n");
@@ -272,9 +275,9 @@ DWORD WINAPI NetConnection::net_thread(void* data)
 
 
 		//update stats
-		if (connection->lastupdate + 500 < GetTickCount())
+		if (connection->lastupdate + 500 < NetGetTime())
 		{
-			connection->lastupdate = GetTickCount();
+			connection->lastupdate = NetGetTime();
 
 			int totalout = 0; 
 			//need to sum up totals for all connections
@@ -301,11 +304,11 @@ DWORD WINAPI NetConnection::net_thread(void* data)
 
 		connection->threadmutex.unlock();
 
-		Sleep(10);//sleep then poll again
+		NetSleep(10);//sleep then poll again
 	}
 	netlog("Network thread exited\n");
 
-	return 0;
+	return;
 };
 
 void NetConnection::SendPackets()//actually sends to the server
