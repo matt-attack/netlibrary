@@ -78,7 +78,10 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 		if (recvsize < 4)
 			return;//bad packet
 
+#ifdef NET_VERBOSE_DEBUG
 		netlogf("[%s] Got OOB packet\n", this->server ? "Server" : "Client");
+#endif
+		
 		Packet p;
 		p.size = recvsize - 4;
 		p.data = new char[p.size];
@@ -87,7 +90,9 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 	}
 	else if (reliable == false)
 	{
+#ifdef NET_VERBOSE_DEBUG
 		netlogf("[%s] Decoding Packet %d bytes\n", this->server ? "Server" : "Client", recvsize);
+#endif
 
 		//netlog("Got Message\n");
 		int ackbits = msg.ReadInt();//this is ackbits
@@ -115,7 +120,9 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 				unsigned char frag = msg2.ReadByte();
 				unsigned char numfrags = msg2.ReadByte();
 
+#ifdef NET_VERBOSE_DEBUG
 				netlogf("	Got unreliable split packet %d of %d\n", frag+1, numfrags);
+#endif
 				if (sequence == this->unreliable_fragment.sequence)
 				{
 					if (frag == this->unreliable_fragment.frags_recieved)//it is next packet in set
@@ -147,7 +154,9 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 					//we should be done
 					if (this->unreliable_fragment.frags_recieved == numfrags)
 					{
+#ifdef NET_VERBOSE_DEBUG
 						netlog("		Was final packet in split unreliable set.\n");
+#endif
 						//return this->unreliable_fragment.data;
 						Packet p;
 						p.reliable = false;
@@ -166,8 +175,9 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 					netlog("[NetChan] ERROR: Got packetsize that is too large!! Malformed packet!!\n");
 					break;
 				}
-
+#ifdef NET_VERBOSE_DEBUG
 				netlogf("	Got packet of %d bytes at %d\n", packetsize, ptr);
+#endif
 				Packet p;
 				p.reliable = false;
 				p.size = packetsize;
@@ -184,10 +194,6 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 	{
 		//check if the packet is complete if fragmented
 		rsequence &= ~(1<<31);
-		if (rsequence & 1<<29)
-		{
-			netlog("was ordered reliable packet\n");
-		}
 		if (rsequence & (1<<30))
 		{
 			rsequence &= ~(1<<30);
@@ -215,9 +221,7 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 					return;
 				}
 
-				netlog("was ordered split reliable packet\n");
-
-				netlogf("[Client] Got reliable split packet %d of %d\n", frag+1, numfrags);
+				netlogf("[Client] Got ordered reliable split packet %d of %d\n", frag+1, numfrags);
 
 				//we need to copy data into a buffer
 				int startseq = rsequence - frag;
@@ -496,7 +500,9 @@ void NetChannel::SendPackets()//actually sends to the server
 	int numfrags = 0;
 	while(this->sending.empty() == false)
 	{
+#ifdef NET_VERBOSE_DEBUG
 		netlogf("[%s] Building Packet\n", this->server ? "Server" : "Client");
+#endif
 		char d[2056];
 		NetMsg msg(2056,d);
 
@@ -522,8 +528,9 @@ void NetChannel::SendPackets()//actually sends to the server
 				msg.WriteByte(numfrags);
 				msg.WriteData(&pack.data[ptr], size);
 
-
+#ifdef NET_VERBOSE_DEBUG
 				netlogf("	Inserting Fragment size %d at %d\n", size, ptr);
+#endif
 
 				ptr += NET_FRAGMENT_SIZE;
 
@@ -541,7 +548,9 @@ void NetChannel::SendPackets()//actually sends to the server
 			}
 			else if ((pack.size + msg.cursize - 8) <= NET_FRAGMENT_SIZE)
 			{
+#ifdef NET_VERBOSE_DEBUG
 				netlogf("	Inserting Packet size %d at %d\n", pack.size, msg.cursize);
+#endif
 				//write size of packet
 				//netlog("[NetCon] Sent unreliable message.\n");
 				msg.WriteShort(pack.size & ~(1<<15));//msb low to signal unfragmented data
@@ -569,18 +578,25 @@ void NetChannel::SendPackets()//actually sends to the server
 					msg.WriteByte(numfrags);
 					msg.WriteData(pack.data, sizeleft);
 
+#ifdef NET_VERBOSE_DEBUG
 					netlogf("	Inserting First Fragment size %d (%d bytes for all frags)\n", sizeleft, pack.size);
-
+#endif
 
 					ptr = sizeleft;
 					frag = 1;
 				}
 				else
+				{
+#ifdef NET_VERBOSE_DEBUG
 					netlogf("[%s] Unreliable message full, have to send another one.\n", this->server ? "Server" : "Client");
+#endif
+				}
 				break;
 			}
 		}
+#ifdef NET_VERBOSE_DEBUG
 		netlogf("[%s] Send Unreliable Payload of %d bytes.\n", this->server ? "Server" : "Client", msg.cursize);
+#endif
 		this->unsent_acks = 0;
 		this->connection->Send(this->remoteaddr, msg.data, msg.cursize);
 	}

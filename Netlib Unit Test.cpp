@@ -74,7 +74,7 @@ int _tmain(int argc, _TCHAR* argv[])
 		}
 	}, &server);
 
-	int status = connection.Connect(0, Address(127,0,0,1,5007), "testing", 0);
+	int status = connection.Connect(Address(127,0,0,1,5007), "testing", 0);
 	if (status < 0)
 	{
 		printf("Connection Test Failed!!!\n");
@@ -84,7 +84,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	for (int i = 0; i < 5; i ++)
 	{
 		cons[i].Open(5010+i);
-		int stat = cons[i].Connect(0, Address(127,0,0,1,5007), "yo", 0);
+		int stat = cons[i].Connect(Address(127,0,0,1,5007), "yo", 0);
 		if (stat < 0)
 			printf("Connection test failed!\n");
 	}

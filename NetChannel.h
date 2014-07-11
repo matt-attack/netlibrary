@@ -9,6 +9,9 @@
 #include "NetDefines.h"
 #include "NetMsg.h"
 
+
+//#define NET_VERBOSE_DEBUG//prints stuff about packet encoding/decoding
+
 //allows proper handling of wrap around
 inline int modulus(int x, int m) {
 	int r = x%m;
@@ -35,7 +38,7 @@ struct RPacket//reliable packet structure
 	int numfragments;
 
 	//stores ordered sequence and channel
-	char channel;
+	signed char channel;
 	unsigned int channel_sequence;
 };
 

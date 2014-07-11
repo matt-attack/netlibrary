@@ -23,8 +23,10 @@
 #include <fcntl.h>
 #include <errno.h>
 
+#ifdef ANDROID
 #include <android/log.h>
 #include <jni.h>
+#endif
 #include <string.h>
 #endif
 

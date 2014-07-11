@@ -27,7 +27,7 @@
 struct ConnectionRequest//sent by client to request a join
 {
 	//all of this is required
-	char packid;
+	unsigned char packid;
 	int id;//use a random number to ensure that people cant spam random packets and fake joining players
 	char plyname[50];
 	char password[50];
@@ -161,7 +161,7 @@ public:
 	//connection packet from packet queue
 	//blocking function
 	//need to change this to just add new peer connection
-	int Connect(char** status, Address server_address, char* name, char* password)
+	int Connect(Address server_address, char* name, char* password, char** status = 0)
 	{ 
 		Peer* peer = new Peer;
 		peer->connection.Init();
@@ -177,7 +177,7 @@ public:
 
 		//build handshake packet
 		ConnectionRequest p;
-		p.packid = NetConnectionRequest;
+		p.packid = (unsigned char)NetCommandPackets::ConnectionRequest;
 		p.id = NET_PROTOCOL_ID;
 		strncpy(p.plyname, name, 50);
 		if (password)
@@ -278,7 +278,7 @@ public:
 		if (peer)
 		{
 			//todo
-			char id = NetDisconnect;
+			unsigned char id = (unsigned char)NetCommandPackets::Disconnect;
 			//disconnect packet id
 			peer->connection.SendOOB((char*)&id, 1);
 
@@ -304,7 +304,7 @@ public:
 			{
 				if (p.second->connection.state == PEER_CONNECTED)
 				{
-					char id = NetDisconnect;
+					unsigned char id = (unsigned char)NetCommandPackets::Disconnect;
 					//disconnect packet id
 					p.second->connection.SendOOB((char*)&id, 1);
 				}

@@ -1,12 +1,11 @@
 #include "NetDefines.h"
 
-#ifdef _WIN32
-#include <Windows.h>
-#endif
 #include <stdio.h>
 #include <cstdarg>
 
 #ifdef _WIN32
+#include <Windows.h>
+
 void netlog(char* o)
 {
 	OutputDebugString(o);

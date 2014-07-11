@@ -1,18 +1,40 @@
-#include "Networking.h"
+#include "Sockets.h"
+
+#ifdef _WIN32
+#define _CRTDBG_MAP_ALLOC
+#include <crtdbg.h>
+#endif
+
+#ifdef _DEBUG   
+#ifndef DBG_NEW      
+#define DBG_NEW new ( _NORMAL_BLOCK , __FILE__ , __LINE__ )     
+#define new DBG_NEW   
+#endif
+#endif
 
 #include <stdio.h>
+#include <stdlib.h>
+
+#include "NetDefines.h"
+
 //always include winsock before windows!!!!!
-#ifdef WINDOWS
+#ifdef _WIN32
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 #include <Windows.h>
 
 #pragma comment (lib, "Ws2_32.lib")
+#else
+#include <netdb.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <errno.h>
 #endif
 
 bool NetworkInit()
 {
-#ifdef WINDOWS
+#ifdef _WIN32
 	WSAData wsaData;
 	int retval;
 	if ((retval = WSAStartup(MAKEWORD(2,2), &wsaData)) != 0)
@@ -29,7 +51,7 @@ bool NetworkInit()
 
 bool NetworkCleanup()
 {
-#ifdef WINDOWS
+#ifdef _WIN32
 	WSACleanup();
 #endif
 	return true;
@@ -66,37 +88,57 @@ Address::Address(char* address, unsigned short port)
 static bool initialized = false;
 Socket::Socket()
 {
-	port = 0;
-	received = 0;
+#ifdef _WIN32
+	if (!initialized)
+	{
+		WSAData wsaData;
+		int retval;
+		if ((retval = WSAStartup(MAKEWORD(2,2), &wsaData)) != 0)
+		{
+			char sz[56];
+			sprintf_s(sz, "WSAStartup failed with error %d\n",retval);
+			OutputDebugStringA(sz);
+			WSACleanup();
+		}
+		initialized = true;
+	}
+#endif
+#ifdef NETSIMULATE
+	this->rtt = 0;
+	this->variance = 0;
+	this->drop = 0;
+#endif
+	sent = received = 0;
 	socket = 0;
 }
 
 Socket::~Socket()
 {
 	Close();
+#ifdef NETSIMULATE
+	while (this->lagged.size() > 0)
+	{
+		auto p = this->lagged.top();
+		this->lagged.pop();
+		delete[] p.data;
+	}
+#endif
 }
 
 bool Socket::Open( unsigned short port )
 {
 	//assert( !IsOpen() );
-	log("socket opened %d", (int)port);
 
 	// create socket
-	errno = 0;
+
 	socket = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
 
-	if ( socket <= 0 )
+	if ( socket == 0 )
 	{
-		log("failed to create socket %i", port);
-		//OutputDebugString( "failed to create socket\n" );
+		int po = port;
+		printf("Failed To Create Socket on %i!\n", po);//OutputDebugString( "failed to create socket\n" );
 		socket = 0;
 		return false;
-	}
-
-	if (errno != 0)
-	{
-		log("socket create error %d", errno);
-		errno = 0;
 	}
 
 	// bind to port
@@ -108,25 +150,16 @@ bool Socket::Open( unsigned short port )
 
 	if ( bind( socket, (const sockaddr*) &address, sizeof(sockaddr_in) ) < 0 )
 	{
-		//jboolean isCopy;
-		//const char * szLogThis = "failed to bind socket";//"hey";//(*env)->GetStringUTFChars(env, logThis, &isCopy);
-		//__android_log_print(ANDROID_LOG_DEBUG, DEBUG_TAG, "NDK:LC: [%s]", szLogThis);
-
-		log("failed to bind socket");//OutputDebugString( "failed to bind socket\n" );
+#ifdef _WIN32
+		int err = WSAGetLastError();
+		printf("Failed to Bind Socket, %i\n", err);//OutputDebugString( "failed to bind socket\n" );
+#endif
 		Close();
 		return false;
 	}
 
-	if (errno != 0)
-	{
-		//const char * szLogThis = "socket bind error";//"hey";//(*env)->GetStringUTFChars(env, logThis, &isCopy);
-		//__android_log_print(ANDROID_LOG_DEBUG, DEBUG_TAG, "NDK:LC: [%s] [%d]", szLogThis, errno);
-		log("socket bind error %d",errno);
-		errno = 0;
-	}
-
 	// set non-blocking i
-#ifdef WINDOWS
+#ifdef _WIN32
 	DWORD nonBlocking = 1;
 	if ( ioctlsocket( socket, FIONBIO, &nonBlocking ) != 0 )
 	{
@@ -139,32 +172,14 @@ bool Socket::Open( unsigned short port )
 	fcntl(socket, F_SETFL, flags | O_NONBLOCK);
 #endif
 
-	u_int yes = 1;
-	if (setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0)
-	{
-		log("reuse addr failed");
-		// perror("Reusing ADDR failed");
-		//exit(1);
-	}
-
-	if (errno != 0)
-	{
-		//const char * szLogThis = "socket non-block error";//"hey";//(*env)->GetStringUTFChars(env, logThis, &isCopy);
-		//__android_log_print(ANDROID_LOG_DEBUG, DEBUG_TAG, "NDK:LC: [%s] [%d]", szLogThis, errno);
-		log("socket non-block error %d", errno);
-		errno = 0;
-	}
-
-	this->port = port;
 	return true;
 }
 
 void Socket::Close()
 {
-	log("socket closed %i", (int)this->port);
 	if ( socket != 0 )
 	{
-#ifdef WINDOWS
+#ifdef _WIN32
 		closesocket( socket );
 #else
 		close(socket);
@@ -181,18 +196,90 @@ bool Socket::IsOpen() const
 
 bool Socket::Send( const Address & destination, const void * data, int size )
 {
+	this->sent += size;
+
+#ifndef NETSIMULATE
 	if ( socket == 0 )
 		return false;
 
 	sockaddr_in address;
 	address.sin_family = AF_INET;
-	address.sin_addr.s_addr = ntohl(destination.GetAddress());//destination.GetAddress();//
+	address.sin_addr.s_addr = htonl( destination.GetAddress() );
 	address.sin_port = htons( (unsigned short) destination.GetPort() );
 
 	int sent_bytes = sendto( socket, (const char*)data, size, 0, (sockaddr*)&address, sizeof(sockaddr_in) );
 
 	return sent_bytes == size;
+#else
+	if (drop > 0 && rand()%100 < drop)
+		return true;
+
+	this->SendLaggedPackets();
+
+
+	int delay = 0;
+	if (variance > 0)
+		delay = rtt + (rand()%(2*variance)-variance);
+	else
+		delay = rtt;
+
+
+	if (delay == 0)
+	{
+		if ( socket == 0 )
+			return false;
+
+		sockaddr_in address;
+		address.sin_family = AF_INET;
+		address.sin_addr.s_addr = htonl( destination.GetAddress() );
+		address.sin_port = htons( (unsigned short) destination.GetPort() );
+
+		int sent_bytes = sendto( socket, (const char*)data, size, 0, (sockaddr*)&address, sizeof(sockaddr_in) );
+
+		return sent_bytes == size;
+	}
+	else
+	{
+		laggedpacket p;
+		p.addr = destination;
+		p.data = new char[size];
+		p.size = size;
+		p.sendtime = NetGetTime() + delay;
+		memcpy(p.data, data, size);
+		this->lagged.push(p);
+	}
+
+	return true;
+#endif
 }
+
+void Socket::SendLaggedPackets()
+{
+#ifdef NETSIMULATE
+	//die compilation
+	if ( socket == 0 )
+		return;
+
+	while (this->lagged.empty() == false)
+	{
+		laggedpacket ii = this->lagged.top();//front();
+		if (NetGetTime() >= ii.sendtime)
+		{
+			sockaddr_in address;
+			address.sin_family = AF_INET;
+			address.sin_addr.s_addr = htonl( ii.addr.GetAddress() );
+			address.sin_port = htons( (unsigned short) ii.addr.GetPort() );
+
+			int sent_bytes = sendto( socket, (const char*)ii.data, ii.size, 0, (sockaddr*)&address, sizeof(sockaddr_in) );
+
+			delete[] ii.data;
+			this->lagged.pop();
+		}
+		else
+			return;
+	}
+#endif
+};
 
 int Socket::Receive( Address & sender, void * data, int size )
 {
@@ -207,21 +294,10 @@ int Socket::Receive( Address & sender, void * data, int size )
 	int received_bytes = recvfrom( socket, (char*)data, size, 0, (sockaddr*)&from, &fromLength );
 
 	if ( received_bytes <= 0 )
-	{
-		if (errno != 11)
-		{
-			//char o[50];
-			//sprintf(o, "had a socket issue %i", received_bytes);
-			//const char * szLogThis = "socket create error";//"hey";//(*env)->GetStringUTFChars(env, logThis, &isCopy);
-			//__android_log_print(ANDROID_LOG_DEBUG, DEBUG_TAG, "NDK:LC: [%s] [%d]", o, errno);
-			log("socket recieve error %d", errno);
-			errno = 0;
-		}
 		return 0;
-	}
 
 	unsigned int address = ntohl( from.sin_addr.s_addr );
-	unsigned short port = ntohs( from.sin_port );
+	unsigned int port = ntohs( from.sin_port );
 
 	sender = Address( address, port );
 
@@ -232,57 +308,80 @@ int Socket::Receive( Address & sender, void * data, int size )
 
 void Socket::SetMulticastTTL(unsigned char multicastTTL)
 {
-	if (setsockopt(socket, IPPROTO_IP, IP_MULTICAST_TTL, (char*)&multicastTTL, sizeof(multicastTTL)) < 0)
+	/*if (setsockopt(socket, IPPROTO_IP, IP_MULTICAST_TTL, (char*)&multicastTTL, sizeof(multicastTTL)) < 0)
 	{
-		log("fail setmulticastTTL");
-	}
+	printf("fail setmulticastTTL\n");
+	}*/
 }
 
 void Socket::JoinGroup(const char* multicastGroup)
 {
-	ip_mreq multicastRequest;
+	/*ip_mreq multicastRequest;
 
 	multicastRequest.imr_multiaddr.s_addr = inet_addr(multicastGroup);
 	multicastRequest.imr_interface.s_addr = htonl(INADDR_ANY);
 	if (setsockopt(socket, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char*)&multicastRequest, sizeof(multicastRequest)) < 0)
 	{
-		log("fail joingroup");
-	}
+	printf("fail joingroup\n");
+	}*/
 }
 
 void Socket::LeaveGroup(const char* multicastGroup)
 {
-	ip_mreq multicastRequest;
+	/*ip_mreq multicastRequest;
 
 	multicastRequest.imr_multiaddr.s_addr = inet_addr(multicastGroup);
 	multicastRequest.imr_interface.s_addr = htonl(INADDR_ANY);
 	if (setsockopt(socket, IPPROTO_IP, IP_DROP_MEMBERSHIP, (char*)&multicastRequest, sizeof(multicastRequest)) < 0)
 	{
-	}
+	}*/
 }
+
+SocketTCP::SocketTCP()
+{
+#ifdef _WIN32
+	if (!initialized)
+	{
+		WSAData wsaData;
+		int retval;
+		if ((retval = WSAStartup(MAKEWORD(2,2), &wsaData)) != 0)
+		{
+			char sz[56];
+			sprintf_s(sz, "WSAStartup failed with error %d\n",retval);
+			OutputDebugStringA(sz);
+			WSACleanup();
+		}
+		initialized = true;
+	}
+#endif
+	received = 0;
+	socket = 0;
+}
+
+#ifdef _WIN32
+SocketTCP::SocketTCP(unsigned int sock)
+{
+	received = 0;
+	socket = sock;
+}
+#else
+SocketTCP::SocketTCP(int sock)
+{
+	received = 0;
+	socket = sock;
+}
+#endif
 
 SocketTCP::~SocketTCP()
 {
 	Close();
 }
 
-SocketTCP::SocketTCP()
-{
-	received = 0;
-	socket = 0;
-}
-
-SocketTCP::SocketTCP(SOCKET& sock)
-{
-	received = 0;
-	socket = sock;
-}
-
-bool SocketTCP::SetNonBlocking(bool enable)
+bool SocketTCP::SetNonBlocking( bool enable)
 {
 	if (enable)
 	{
-#ifdef WIN32
+#ifdef _WIN32
 		DWORD nonBlocking = 1;
 		if ( ioctlsocket( socket, FIONBIO, &nonBlocking ) != 0 )
 		{
@@ -296,7 +395,7 @@ bool SocketTCP::SetNonBlocking(bool enable)
 	}
 	else
 	{
-#ifdef WINDOWS
+#ifdef _WIN32
 		DWORD nonBlocking = 0;
 		if ( ioctlsocket( socket, FIONBIO, &nonBlocking ) != 0 )
 		{
@@ -315,15 +414,11 @@ bool SocketTCP::SetTimeout(int ms)
 {
 	if (socket == 0)
 		return false;
-	//int timeout = ms;//time in ms
-	struct timeval timeout;
-	timeout.tv_sec = 2;
-	timeout.tv_usec = 2000;//ms*1000;
+	int timeout = ms;//time in ms
 
 	if (setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout,
 		sizeof(timeout)) < 0)
 	{
-		log("setsockopt error: %d", errno);
 		perror("setsockopt failed\n");
 		return false;
 	}
@@ -331,14 +426,13 @@ bool SocketTCP::SetTimeout(int ms)
 	if (setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout,
 		sizeof(timeout)) < 0)
 	{
-		log("setsockopt error: %d", errno);
 		perror("setsockopt failed\n");
 		return false;
 	}
 	return true;
 }
 
-bool SocketTCP::Connect( const char* address)
+bool SocketTCP::Connect( const char* address, const char* protocol)
 {
 	addrinfo req;
 	addrinfo *res;
@@ -346,30 +440,41 @@ bool SocketTCP::Connect( const char* address)
 	memset(&req, 0, sizeof(req));
 	req.ai_family = AF_UNSPEC;
 	req.ai_socktype = SOCK_STREAM;
-	if (getaddrinfo(address, "80", &req, &res) != 0)
+
+	const char* proto = protocol;
+#ifndef _WIN32
+	if (strcmp(protocol, "http") == 0)
 	{
-		log("get addr info failed");
+		proto = "80";//for linux and wutnot
+	}
+#endif
+	if (getaddrinfo(address, proto, &req, &res) < 0)
+	{
+		perror("getaddrinfo");
 		return false;
 	}
 
 	if (res == 0)
 	{
-		log("sock info null");
 		return false;
 	}
 
 	int s = ::socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 	if (s < 0)
 	{
-		log("socket create error %d", errno);
+		perror("socket");
 		return false;
 	}
 	this->socket = s;
 
 	if (connect(socket, res->ai_addr, res->ai_addrlen) < 0)
 	{
-		log("socket connect error %d", errno);
+		perror("connect");
+#ifndef _WIN32
 		close(socket);
+#else
+		closesocket(socket);
+#endif
 		return false;
 	}
 
@@ -382,31 +487,36 @@ bool SocketTCP::Connect( Address server )
 	socket = ::socket( AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if ( socket <= 0 )
 	{
-		log( "failed to create socket\n" );
+		//log( "failed to create socket\n" );
 		socket = 0;
 		return false;
 	}
 
 	sockaddr_in address;
 	address.sin_family = AF_INET;
-	address.sin_addr.s_addr = htonl( server.GetAddress() );//server.GetAddress();//
+	address.sin_addr.s_addr = htonl( server.GetAddress() );
 	address.sin_port = htons( (unsigned short) server.GetPort() );
 
 	if ( connect(socket, (const sockaddr*) &address, sizeof(sockaddr_in)) < 0)
 	{
-		log( "failed to connect socket\n" );
+		//log( "failed to connect socket\n" );
 		Close();
 		return false;
 	}
 
 	// set non-blocking i
-	/*DWORD nonBlocking = 1;
+#ifdef _WIN32
+	DWORD nonBlocking = 1;
 	if ( ioctlsocket( socket, FIONBIO, &nonBlocking ) != 0 )
 	{
-	printf( "failed to set non-blocking socket\n" );
-	Close();
-	return false;
-	}*/
+		printf( "failed to set non-blocking socket\n" );
+		Close();
+		return false;
+	}
+#else
+	int flags = fcntl(socket, F_GETFL);
+	fcntl(socket, F_SETFL, flags | O_NONBLOCK);
+#endif
 
 	return true;
 }
@@ -421,23 +531,46 @@ SocketTCP* SocketTCP::Accept(Address& sender)//returns sock if successful, and s
 	address.sin_port = htons( 0 );//(unsigned short) port );
 
 	int size = sizeof(sockaddr_in);
-	SOCKET n = accept( socket, (sockaddr*) &address, &size);
-	if (n != 0)
+	fd_set rfds;
+	FD_ZERO(&rfds);
+	FD_SET(socket, &rfds);
+
+	struct timeval tv;
+
+	/* Wait up to five seconds. */
+	//there is something wierd here on linux I saw it before
+	tv.tv_sec = 20;
+	tv.tv_usec = 0;
+#ifdef _WIN32
+	if (select(1, &rfds, 0, 0, &tv))
+#else
+	if (true)
+#endif
 	{
-		//closesocket(this->socket);
-		ret = new SocketTCP(n);
+		int n = accept( socket, (sockaddr*) &address, &size);
+		if (n != 0)
+		{
+			//closesocket(this->socket);
+			ret = new SocketTCP(n);
 
-		unsigned int addr = ntohl( address.sin_addr.s_addr );
-		unsigned int port = ntohs( address.sin_port );
+			unsigned int addr = ntohl( address.sin_addr.s_addr );
+			unsigned int port = ntohs( address.sin_port );
 
-		sender = Address( addr, port );
+			sender = Address( addr, port );
 
-		//this->socket = n;
-		return ret;
+			//this->socket = n;
+			return ret;
+		}
+		else
+		{
+#ifdef _WIN32
+			fprintf(stderr, "Error accepting %d\n",WSAGetLastError());
+#endif
+		}
 	}
 	else
 	{
-#ifdef WINDOWS
+#ifdef _WIN32
 		fprintf(stderr, "Error accepting %d\n",WSAGetLastError());
 #endif
 	}
@@ -450,7 +583,7 @@ bool SocketTCP::Listen(unsigned short port)
 	socket = ::socket( AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if ( socket <= 0 )
 	{
-		log( "failed to create socket\n" );
+		//log( "failed to create socket\n" );
 		socket = 0;
 		return false;
 	}
@@ -463,35 +596,37 @@ bool SocketTCP::Listen(unsigned short port)
 
 	if ( bind( socket, (const sockaddr*) &address, sizeof(sockaddr_in) ) < 0 )
 	{
-		log( "failed to bind socket\n" );
-		//fprintf(stderr, "bind() failed, Error: %d\n", WSAGetLastError());
+#ifdef _WIN32
+		printf( "failed to bind socket\n" );
+		fprintf(stderr, "bind() failed, Error: %d\n", WSAGetLastError());
+#endif
 		Close();
 		return false;
 	}
 
 	if (listen(socket, 10) < 0)
 	{
-		log("listen failed\n");
+		//log("listen failed\n");
 	}
 
-	int size = sizeof(sockaddr_in);
+	//int size = sizeof(sockaddr_in);
 	//accept(socket, (sockaddr*) &address, sizeof(sockaddr_in));
 
 	/*while(true){
-	log("waiting for a connection\n");
+	printf("waiting for a connection\n");
 	//csock = (int*)malloc(sizeof(int));
 	SOCKET n = accept( socket, (sockaddr*) &address, &size);
 	if (n != 0)
 	{
-	close(this->socket);//close socket
+	closesocket(this->socket);
 	this->socket = n;
-	log("Received connection from %s\n",inet_ntoa(address.sin_addr));
+	printf("Received connection from %s\n",inet_ntoa(address.sin_addr));
 
 	break;//CreateThread(0,0,&SocketHandler, (void*)csock, 0,0);
 	}
 	else
 	{
-	//printf(stderr, "Error accepting %d\n",WSAGetLastError());
+	fprintf(stderr, "Error accepting %d\n",WSAGetLastError());
 	}
 	}*/
 
@@ -516,7 +651,7 @@ bool SocketTCP::Open( Address & server, unsigned short port )
 
 	if ( socket <= 0 )
 	{
-		log( "failed to create socket\n" );
+		printf( "failed to create socket\n" );
 		socket = 0;
 		return false;
 	}
@@ -541,19 +676,27 @@ bool SocketTCP::Open( Address & server, unsigned short port )
 
 	if ( connect(socket, (const sockaddr*) &address, sizeof(sockaddr_in)) < 0)
 	{
-		//OutputDebugStringA( "failed to connect socket\n" );
+#ifdef _WIN32
+		OutputDebugStringA( "failed to connect socket\n" );
+#endif
 		Close();
 		return false;
 	}
 
 	// set non-blocking i
+#ifdef _WIN32
 	DWORD nonBlocking = 1;
-	/*if ( ioctlsocket( socket, FIONBIO, &nonBlocking ) != 0 )
+	if ( ioctlsocket( socket, FIONBIO, &nonBlocking ) != 0 )
 	{
-	OutputDebugStringA( "failed to set non-blocking socket\n" );
-	Close();
-	return false;
-	}*/
+		OutputDebugStringA( "failed to set non-blocking socket\n" );
+
+		Close();
+		return false;
+	}
+#else
+	int flags = fcntl(socket, F_GETFL);
+	fcntl(socket, F_SETFL, flags | O_NONBLOCK);
+#endif
 
 	return true;
 }
@@ -562,14 +705,14 @@ void SocketTCP::Close()
 {
 	if ( socket != 0 )
 	{
-		log("TCP Connection Closed...\n");
-#ifdef WINDOWS
+		//log("TCP Connection Closed...\n");
+#ifdef _WIN32
 		if(closesocket( socket ) != 0)
 #else
 		if(close(socket) != 0)
 #endif
 		{
-#ifdef WINDOWS
+#ifdef _WIN32
 			fprintf(stderr, "closesocket() failed, Error: %d\n", WSAGetLastError());
 #endif
 		}
@@ -596,32 +739,35 @@ bool SocketTCP::Send( const void * data, int size) //const Address & destination
 
 	int sent_bytes = send(socket, (const char*)data, size, 0);//sendto( socket, (const char*)data, size, 0, (sockaddr*)&address, sizeof(sockaddr_in) );
 
+	/*int err = WSAGetLastError();
+	if (err && err != 10035)//not a block error or 0
+	{
+	char o[100];
+	sprintf(o, "TCP Send Socket Error %d\n",WSAGetLastError());
+	OutputDebugString(o);
+	//goto cleanup;
+	}*/
 	return sent_bytes == size;
 }
 
 int SocketTCP::Receive( void * data, unsigned int size )
 {
 	if ( socket == 0 )
-		return -1;
+		return false;
 
-	int received_bytes = recv(socket, data, size, 0);//recvfrom( socket, (char*)data, size, 0, (sockaddr*)&from, &fromLength );
+	int received_bytes = recv(socket, (char*)data, size, 0);//recvfrom( socket, (char*)data, size, 0, (sockaddr*)&from, &fromLength );
 
-	if (received_bytes < 0)
-	{
-		if (errno != EWOULDBLOCK)//ignore errors about it being blocked
-		{
-			char o[50];
-			sprintf(o,"socket recv err: %d", errno);
-			log(o);
-
-			return -1;
-		}
-	}
 	if ( received_bytes <= 0 )
 		return 0;
 
-	//unsigned int address = ntohl( from.sin_addr.s_addr );
-	//unsigned int port = ntohs( from.sin_port );
+	/*int err = WSAGetLastError();
+	if (err && err != 10035)//not a block error or 0
+	{
+	char o[100];
+	sprintf(o, "TCP Recv Socket Error %d\n",WSAGetLastError());
+	OutputDebugString(o);
+	//goto cleanup;
+	}*/
 
 	this->received += received_bytes;
 

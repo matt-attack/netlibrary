@@ -84,7 +84,7 @@ void NetConnection::net_thread(void* data)
 				if (rsequence == -1)
 				{//is OOB packet
 					//read in command packets
-					if (buffer[4] == NetDisconnect)//packetid of 99 is disconnect
+					if (buffer[4] == (unsigned char)NetCommandPackets::Disconnect)//packetid of 99 is disconnect
 					{
 						TPacket p;
 						p.data = 0;
@@ -105,7 +105,7 @@ void NetConnection::net_thread(void* data)
 
 						//connection->peers.erase(connection->peers.find(sender));//delete me
 					}
-					else if (buffer[4] == NetPing)
+					else if (buffer[4] == (unsigned char)NetCommandPackets::Ping)
 					{
 						//netlog("[NetCon] got keep alive/ack packet\n");
 
@@ -113,7 +113,7 @@ void NetConnection::net_thread(void* data)
 						int ackbits = *(int*)&buffer[9];
 						client->connection.ProcessAck(ack, ackbits);
 					}
-					else if (buffer[4] == NetConnectionRequest)//is another connection request packet, ignore it)
+					else if (buffer[4] == (unsigned char)NetCommandPackets::ConnectionRequest)//is another connection request packet, ignore it)
 					{
 						netlog("[NetCon] Got connection request packet while still connected\n");
 					}
@@ -153,7 +153,7 @@ void NetConnection::net_thread(void* data)
 				//new connection
 				/* just use username at first, then add passwords eventually */
 				ConnectionRequest* p = (ConnectionRequest*)(buffer+4);
-				if (p->packid != NetConnectionRequest)
+				if (p->packid != (unsigned char)NetCommandPackets::ConnectionRequest)
 				{
 					netlog("[NetCon] Got invalid connection request!\n");
 					continue;
@@ -233,7 +233,7 @@ void NetConnection::net_thread(void* data)
 
 				char buffer[500];
 				NetMsg msg(500, buffer);
-				msg.WriteByte(NetPing);
+				msg.WriteByte((unsigned char)NetCommandPackets::Ping);
 
 				//write acks
 				msg.WriteInt(ii.second->connection.recieved_sequence);
