@@ -34,6 +34,7 @@ unsigned int NetGetTime()
 }
 #else
 #include <unistd.h>
+
 void netlog(char* o)
 {
 	//OutputDebugString(o);

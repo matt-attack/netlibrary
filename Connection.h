@@ -1,25 +1,15 @@
 #ifndef _CONNECTION_HEADER_
 #define _CONNECTION_HEADER_
 
-/*#define _CRTDBG_MAP_ALLOC
-#include <crtdbg.h>
-
-#ifdef _DEBUG   
-#ifndef DBG_NEW      
-#define DBG_NEW new ( _NORMAL_BLOCK , __FILE__ , __LINE__ )     
-#define new DBG_NEW   
-#endif
-#endif*/
+#include <map>
+#include <thread>
+#include <mutex>
+#include <memory>
 
 #include "NetMsg.h"
 #include "Sockets.h"
 #include "NetDefines.h"
 #include "NetChannel.h"
-
-#include <map>
-#include <thread>
-#include <mutex>
-
 
 //packets, modify these as you wish
 #pragma pack(push)
@@ -85,11 +75,8 @@ public:
 	virtual char* CanConnect(Address addr, ConnectionRequest* p) = 0;
 };
 
-#include <memory>
 
-//ok, the following IDs are taken for OOB packets
-//99 disconnect
-//98 ack/keep alive
+
 class NetConnection
 {
 	std::mutex threadmutex;
@@ -100,6 +87,8 @@ class NetConnection
 
 	bool running;
 	std::queue<TPacket> incoming;
+	
+	int timeout;
 public:
 
 	//stats
@@ -114,6 +103,7 @@ public:
 	{
 		this->observer = 0;
 		this->running = false;
+		this->timeout = 15000;//in milliseconds
 	}
 
 	~NetConnection()
@@ -319,7 +309,10 @@ public:
 		this->threadmutex.unlock();
 	}
 
+	//opens sockets for communication
 	void Open(unsigned short port);
+
+	//closes sockets, and disconnects any connected peers
 	void Close();
 
 	IServer* observer;
@@ -328,9 +321,16 @@ public:
 		observer = server;
 	}
 
+	//sets the disconnect timeout in milliseconds
+	void SetTimeout(int ms)
+	{
+		this->timeout = ms;
+	}
 
+	//forces sending of queued packets to clients
 	void SendPackets();
 
+	//sends packet to specified peer
 	void Send(Peer* client, char* data, unsigned int size, bool OOB = false);
 
 	//delete returned buffer when done
@@ -339,6 +339,7 @@ public:
 		return std::make_unique<Packet>();
 	}*/
 
+	//this returns a char array of the latest packet received, delete[] when finished with it
 	char* Receive(Peer*& sender, int& size)
 	{
 		if (this->incoming.size() == 0)

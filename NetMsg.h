@@ -3,6 +3,13 @@
 
 #include <string>
 
+#ifdef _DEBUG
+#include <assert.h>
+#define NET_ASSERT(hi) assert(hi)
+#else
+#define NET_ASSERT(hi)
+#endif
+
 struct NetMsg
 {
 	int readpos;
@@ -40,6 +47,9 @@ struct NetMsg
 	{
 		unsigned char b = this->data[readpos];
 		this->readpos += 1;
+
+		NET_ASSERT(readpos <= this->maxsize);
+
 		return b;
 	};
 
@@ -56,6 +66,8 @@ struct NetMsg
 		unsigned short *sp = (unsigned short *)&this->data[this->readpos];
 		value = *sp;
 		this->readpos += 2;
+
+		NET_ASSERT(readpos <= this->maxsize);
 
 		return value;
 	};
@@ -74,6 +86,8 @@ struct NetMsg
 		value = *sp;
 		this->readpos += 4;
 
+		NET_ASSERT(readpos <= this->maxsize);
+
 		return value;
 	};
 
@@ -91,6 +105,8 @@ struct NetMsg
 		value = *sp;
 		this->readpos += 4;
 
+		NET_ASSERT(readpos <= this->maxsize);
+
 		return value;
 	};
 
@@ -107,6 +123,8 @@ struct NetMsg
 		float *sp = (float *)&this->data[this->readpos];
 		value = *sp;
 		this->readpos += 4;
+
+		NET_ASSERT(readpos <= this->maxsize);
 
 		return value;
 	};
@@ -140,6 +158,8 @@ struct NetMsg
 
 		this->readpos += l + 1;
 
+		NET_ASSERT(readpos <= this->maxsize);
+
 		//unsigned int p = 0;
 		//while (this->data[readpos + p] != 0)
 		//{
@@ -164,6 +184,8 @@ struct NetMsg
 			//log("we have issue");
 		memcpy(dest, &this->data[this->readpos], size);
 		this->readpos += size;
+
+		NET_ASSERT(readpos <= this->maxsize);
 	}
 };
 

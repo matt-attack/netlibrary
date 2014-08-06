@@ -81,7 +81,7 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 #ifdef NET_VERBOSE_DEBUG
 		netlogf("[%s] Got OOB packet\n", this->server ? "Server" : "Client");
 #endif
-		
+
 		Packet p;
 		p.size = recvsize - 4;
 		p.data = new char[p.size];
@@ -94,7 +94,6 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 		netlogf("[%s] Decoding Packet %d bytes\n", this->server ? "Server" : "Client", recvsize);
 #endif
 
-		//netlog("Got Message\n");
 		int ackbits = msg.ReadInt();//this is ackbits
 
 		int ptr = 8;//points to size of sub-packet
@@ -679,115 +678,119 @@ void NetChannel::SendReliables()//actually sends to the server
 	if (this->sequence == 0)
 		this->sequence = 1;
 
+	//derp only sends one at a time
 
-	bool fragmented = false;
-	int numfrags = 1;
-	if (this->reliable_sending.front().size > NET_FRAGMENT_SIZE)
+	while(this->reliable_sending.empty() == false)
 	{
-		numfrags = this->reliable_sending.front().size/NET_FRAGMENT_SIZE + 1;
-		fragmented = true;
-	}
-	int fragment = 0;
-	int mw = modulus(this->sequence-1,33);
-	//check if we are in the middle of sending packet
-	if (window[mw].data && window[mw].fragment + 1 != window[mw].numfragments)
-	{
-		//netlog("we were in the middle of sending split packet, try and send more\n");
-		fragment = window[mw].fragment+1;
-	}
-
-	for (; fragment < numfrags; fragment++)
-	{
-		//check if we can slide the window
-		int zw = modulus(this->sequence - 32, 33);//(this->sequence - 33) % 33;
-		mw = modulus(this->sequence, 33);
-
-		if (window[zw].recieved == true || window[zw].data == 0)
+		bool fragmented = false;
+		int numfrags = 1;
+		if (this->reliable_sending.front().size > NET_FRAGMENT_SIZE)
 		{
-			if (window[zw].data && window[zw].fragment+1 == window[zw].numfragments)//delete old data
+			numfrags = this->reliable_sending.front().size/NET_FRAGMENT_SIZE + 1;
+			fragmented = true;
+		}
+		int fragment = 0;
+		int mw = modulus(this->sequence-1,33);
+		//check if we are in the middle of sending packet
+		if (window[mw].data && window[mw].fragment + 1 != window[mw].numfragments)
+		{
+			//netlog("we were in the middle of sending split packet, try and send more\n");
+			fragment = window[mw].fragment+1;
+		}
+
+		for (; fragment < numfrags; fragment++)
+		{
+			//check if we can slide the window
+			int zw = modulus(this->sequence - 32, 33);//(this->sequence - 33) % 33;
+			mw = modulus(this->sequence, 33);
+
+			if (window[zw].recieved == true || window[zw].data == 0)
 			{
-				delete[] window[zw].data;
+				if (window[zw].data && window[zw].fragment+1 == window[zw].numfragments)//delete old data
+				{
+					delete[] window[zw].data;
 
-				window[zw].data = 0;
+					window[zw].data = 0;
+				}
 			}
-		}
-		else if (window[zw].data)//ok, we cant let this break on us
-		{
-			//netlog("[NetCon] Couldn't send packet because sending old one\n");
-			return;//we havent gotten ack on 31st packet, so cant slide
-		}
+			else if (window[zw].data)//ok, we cant let this break on us
+			{
+				//netlog("[NetCon] Couldn't send packet because sending old one\n");
+				return;//we havent gotten ack on 31st packet, so cant slide
+			}
 
-		this->lastsendtime = NetGetTime();
+			this->lastsendtime = NetGetTime();
 
-		char d[2056];
-		NetMsg msg(2056,d);
-		int seq = this->sequence;
-		//todo, handle sequence number overflow//seq &= ~(1<<31);//this is not OOB
-		seq |= 1<<31;//this is for if reliable;
-		if (fragmented)
-			seq |= 1<<30;//this signifies split packet
-		if (this->reliable_sending.front().channel != -1)
-			seq |= 1<<29;
+			char d[2056];
+			NetMsg msg(2056,d);
+			int seq = this->sequence;
+			//todo, handle sequence number overflow//seq &= ~(1<<31);//this is not OOB
+			seq |= 1<<31;//this is for if reliable;
+			if (fragmented)
+				seq |= 1<<30;//this signifies split packet
+			if (this->reliable_sending.front().channel != -1)
+				seq |= 1<<29;
 
-		//dont send this if not reliable
-		msg.WriteInt(seq);//if MSB bit high, then fragmented 
+			//dont send this if not reliable
+			msg.WriteInt(seq);//if MSB bit high, then fragmented 
 
-		msg.WriteInt(recieved_sequence);
-		msg.WriteInt(this->GetAckBits());//then write bits with last recieved sequences
+			msg.WriteInt(recieved_sequence);
+			msg.WriteInt(this->GetAckBits());//then write bits with last recieved sequences
 
-		if (this->reliable_sending.front().channel != -1)
-		{
-			msg.WriteByte(this->reliable_sending.front().channel);
-			msg.WriteShort(this->outgoing_ordered_sequence[this->reliable_sending.front().channel]);
-		}
+			if (this->reliable_sending.front().channel != -1)
+			{
+				msg.WriteByte(this->reliable_sending.front().channel);
+				msg.WriteShort(this->outgoing_ordered_sequence[this->reliable_sending.front().channel]);
+			}
 
-		if (fragmented)
-		{
-			msg.WriteShort(fragment);
-			msg.WriteShort(numfrags);
-		}
-
-		//fill out latest window slot
-		window[mw].recieved = false;
-		window[mw].data = this->reliable_sending.front().data;
-		window[mw].size = this->reliable_sending.front().size;
-		window[mw].sendtime = NetGetTime();
-		window[mw].sequence = this->sequence;
-		window[mw].resends = 0;
-		window[mw].fragment = fragment;
-		window[mw].numfragments = numfrags;
-		window[mw].channel = this->reliable_sending.front().channel;
-		if (window[mw].channel != -1)
-			window[mw].channel_sequence = this->outgoing_ordered_sequence[window[mw].channel];
-
-		if (window[mw].fragment == numfrags-1 || numfrags == 1)
-		{
-			this->outgoing_ordered_sequence[window[mw].channel]++;
-		}
-
-		//ok, pack in the data, make sure we dont pack too much
-		while(this->reliable_sending.empty() == false)
-		{
-			RPacket pack = this->reliable_sending.front();
-			//write size of packet
 			if (fragmented)
 			{
-				msg.WriteData(pack.data+fragment*NET_FRAGMENT_SIZE, (pack.size - fragment*NET_FRAGMENT_SIZE) < NET_FRAGMENT_SIZE ? pack.size - fragment*NET_FRAGMENT_SIZE : NET_FRAGMENT_SIZE);
+				msg.WriteShort(fragment);
+				msg.WriteShort(numfrags);
 			}
-			else
+
+			//fill out latest window slot
+			window[mw].recieved = false;
+			window[mw].data = this->reliable_sending.front().data;
+			window[mw].size = this->reliable_sending.front().size;
+			window[mw].sendtime = NetGetTime();
+			window[mw].sequence = this->sequence;
+			window[mw].resends = 0;
+			window[mw].fragment = fragment;
+			window[mw].numfragments = numfrags;
+			window[mw].channel = this->reliable_sending.front().channel;
+			if (window[mw].channel != -1)
+				window[mw].channel_sequence = this->outgoing_ordered_sequence[window[mw].channel];
+
+			if (window[mw].fragment == numfrags-1 || numfrags == 1)
 			{
-				msg.WriteShort(pack.size);
-				msg.WriteData(pack.data, pack.size);
+				this->outgoing_ordered_sequence[window[mw].channel]++;
 			}
 
-			break;//only send 1 for now
+			//ok, pack in the data, make sure we dont pack too much
+			while(this->reliable_sending.empty() == false)
+			{
+				RPacket pack = this->reliable_sending.front();
+				//write size of packet
+				if (fragmented)
+				{
+					msg.WriteData(pack.data+fragment*NET_FRAGMENT_SIZE, (pack.size - fragment*NET_FRAGMENT_SIZE) < NET_FRAGMENT_SIZE ? pack.size - fragment*NET_FRAGMENT_SIZE : NET_FRAGMENT_SIZE);
+				}
+				else
+				{
+					msg.WriteShort(pack.size);
+					msg.WriteData(pack.data, pack.size);
+				}
+
+				break;//only send 1 for now
+			}
+
+			this->unsent_acks = 0;
+			this->connection->Send(this->remoteaddr, msg.data, msg.cursize);
+
+			this->sequence++;//increment sequence number
 		}
-
-		this->unsent_acks = 0;
-		this->connection->Send(this->remoteaddr, msg.data, msg.cursize);
-
-		this->sequence++;//increment sequence number
+		if (window[modulus(this->sequence - 1, 33)].fragment+1 == numfrags)
+			this->reliable_sending.pop();//pop if finished with packet
 	}
-	if (window[modulus(this->sequence - 1, 33)].fragment+1 == numfrags)
-		this->reliable_sending.pop();//pop if finished with packet
 }//actually does the networking

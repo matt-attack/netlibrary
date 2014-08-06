@@ -244,7 +244,7 @@ void NetConnection::net_thread(void* data)
 				ii.second->connection.lastsendtime = NetGetTime();
 			}
 
-			if (ii.second->connection.lastreceivetime < NetGetTime() - 115000 && ii.second->connection.state == PEER_CONNECTED)
+			if (ii.second->connection.lastreceivetime < NetGetTime() - connection->timeout && ii.second->connection.state == PEER_CONNECTED)
 			{
 				//player timed out
 				netlog("whoops\n");
