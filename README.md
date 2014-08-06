@@ -34,10 +34,11 @@ while (buffer = connection.Receive(sender, size))
 ```
 
 Now, there are four different types of messages that you can send:
-1. Unreliable, Unsequenced Messages - these may or may not arrive in any order
-2. Reliable, Unordered Messages - these are guaranteed to arrive, but can be in any order
-3. Reliable, Ordered Messages - these are guaranteed to arrive in the order that they were sent in
-4. OOB Messages - these are unreliable messages used primarily for low level commands that are sent immediately
+
+- Unreliable, Unsequenced Messages - these may or may not arrive in any order
+- Reliable, Unordered Messages - these are guaranteed to arrive, but can be in any order
+- Reliable, Ordered Messages - these are guaranteed to arrive in the order that they were sent in
+- OOB Messages - these are unreliable messages used primarily for low level commands that are sent immediately
 
 ```cpp
 //There are two different ways to send messages, either by specifying the Peer* or not
