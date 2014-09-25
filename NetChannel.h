@@ -4,13 +4,11 @@
 #include <queue>
 #include <thread>
 #include <map>
+#include <mutex>
 
 #include "Sockets.h"
 #include "NetDefines.h"
 #include "NetMsg.h"
-
-
-//#define NET_VERBOSE_DEBUG//prints stuff about packet encoding/decoding
 
 //allows proper handling of wrap around
 inline int modulus(int x, int m) {
@@ -57,11 +55,17 @@ struct Fragment
 class NetChannel
 {
 	friend class NetConnection;
+	friend class Peer;
+
+	//ping stuff
+	unsigned int lastpingtime;
+	unsigned int rtt;//in ms
 
 	//need to calculate and store RTT
 	//lets add a sequence number to all packets
 	//and keep list of last idk, 64 with sequence numbers, send times and a space for recieve time
 	//then calculate RTT from those
+	std::mutex sendingmutex;//lock this when messing with queues
 	std::queue<Packet> sending;
 	std::queue<RPacket> reliable_sending;
 
@@ -75,7 +79,6 @@ class NetChannel
 	Fragment unreliable_fragment;//only supports one at a time
 	Fragment reliable_frags[20];//need to have half the number of these as the number of window frames, so (numwindows+1)/2
 
-
 	//lets just give 16 channels for now
 	//this stores reliable packets for reordering
 	int incoming_ordered_sequence[16];
@@ -84,15 +87,14 @@ class NetChannel
 		//then check ordered_buffer if any packets can now be pushed out, increment if needed
 	//if more than one larger, push to ordered_buffer
 	std::map<int,Packet> ordered_buffer[16];
-
-public:
-
-	int lastreceivetime;
-	int lastsendtime;
-	int state;
-
+	
 	bool server;
 	Socket* connection;
+public:
+
+	unsigned int lastreceivetime;
+	unsigned int lastsendtime;
+	int state;
 
 	Address remoteaddr;
 
@@ -108,6 +110,8 @@ public:
 
 	void Init()
 	{
+		this->rtt = 100;//good starting value
+		this->lastpingtime = 0;
 		this->unsent_acks = 0;
 		this->lastsendtime = 0;
 		this->server = false;
@@ -138,6 +142,7 @@ public:
 			i.sequence = 0;
 			i.frags_recieved = 0;
 		}
+		this->lastreceivetime = NetGetTime();
 	}
 
 	void Cleanup();
@@ -153,21 +158,11 @@ public:
 		p.size = size;
 		p.data = tmp;
 		p.reliable = false;
+		sendingmutex.lock();
 		sending.push(p);
+		sendingmutex.unlock();
 	}
-	//this drops duplicate and out of order packets
-	/*void SendOrdered(char* data, int size, unsigned char channel = 0)
-	{
-	//ok, we need to make copy of data
-	char* tmp = new char[size];
-	memcpy(tmp, data, size);
 
-	Packet p;
-	p.size = size;
-	p.data = tmp;
-	p.ordered = true;
-	sending.push(p);
-	}*/
 	void SendOOB(char* data, int size)
 	{
 		//need to form the packet
@@ -195,7 +190,9 @@ public:
 		p.resends = 0;
 		p.fragment = p.numfragments = 0;
 		p.channel = -1;//tell system this is not ordered
+		sendingmutex.lock();
 		reliable_sending.push(p);
+		sendingmutex.unlock();
 	}
 
 	void SendReliableOrdered(char* data, int size, unsigned char channel = 0)
@@ -213,13 +210,14 @@ public:
 		p.fragment = p.numfragments = 0;
 		p.channel = channel;
 		p.sequence = 0;//will fill in later
+		sendingmutex.lock();
 		reliable_sending.push(p);
+		sendingmutex.unlock();
 	}
-
-	void SendReliables();
 
 	//if you call this, you dont need to call send reliables
 	void SendPackets();
+	void SendReliables();
 
 private:
 

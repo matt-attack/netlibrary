@@ -110,6 +110,25 @@ struct NetMsg
 		return value;
 	};
 
+	void WriteDouble(double f)
+	{
+		double *sp = (double *)&this->data[this->cursize];
+		*sp = f;
+		this->cursize += 8;
+	};
+
+	double ReadDouble()
+	{
+		double value;
+		double *sp = (double *)&this->data[this->readpos];
+		value = *sp;
+		this->readpos += 8;
+
+		NET_ASSERT(readpos <= this->maxsize);
+
+		return value;
+	};
+
 	void WriteFloat(float f)
 	{
 		float *sp = (float *)&this->data[this->cursize];
@@ -129,6 +148,7 @@ struct NetMsg
 		return value;
 	};
 
+
 	void WriteData(char* dat, int size)
 	{
 		//if (size < 0 || size > 600000)
@@ -137,9 +157,23 @@ struct NetMsg
 		this->cursize += size;
 	};
 
-	void WriteString(char* str)
+	void WriteString(const char* str)
 	{
 		strcpy(&this->data[cursize],str);
+		int l = strlen(str);
+		//unsigned int p = 0;
+		//while (str[p] != 0)
+		//{
+		//	this->data[cursize + p] = str[p];
+		//	p += 1;
+		//}
+		//this->data[cursize + p] = 0;
+		this->cursize += l + 1;
+	}
+
+	void WriteString(const char* str, unsigned int len)
+	{
+		strncpy(&this->data[cursize],str, len);
 		int l = strlen(str);
 		//unsigned int p = 0;
 		//while (str[p] != 0)

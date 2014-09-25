@@ -41,12 +41,16 @@ void Send(client);
 //needs to have way to get snapshots externally for rolling back
 //have each thing sent have a function that says if I should send to this client
 }*/
-
-class Peer
+//roll netchannel and peer into the same class named peer
+class Peer: public NetChannel
 {
 public:
-	NetChannel connection;
 	void* data;//used by external client to store data associated with this user, like the client class
+
+	unsigned int GetRTT()
+	{
+		return this->rtt;
+	}
 };
 
 //structure used by Receive()
@@ -88,11 +92,14 @@ class NetConnection
 	bool running;
 	std::queue<TPacket> incoming;
 	
-	int timeout;
+	//settings
+	unsigned int timeout;
+	unsigned int maxpeers;
 public:
 
 	//stats
-	int lastreceived, lastsent, lastupdate, lasttcp;
+	unsigned int lastreceived, lastsent, lastupdate, lasttcp;
+	int sent, recieved;
 	float datarate;
 	float outdatarate;
 	float tcprate;
@@ -116,34 +123,34 @@ public:
 	void SendOOB(char* data, int size)
 	{
 		if (this->peers.size() > 0)
-			this->peers.begin()->second->connection.SendOOB(data, size);
+			this->peers.begin()->second->SendOOB(data, size);
 	};//this defaults to first connected peer
 
 	void SendOOB(Peer* peer, char* data, int size)
 	{
-		peer->connection.SendOOB(data, size);
+		peer->SendOOB(data, size);
 	}
 
 	void Send(char* data, int size)
 	{
 		if (this->peers.size() > 0)
-			this->peers.begin()->second->connection.Send(data, size);
+			this->peers.begin()->second->Send(data, size);
 	};//this defaults to first connected peer
 
 	void Send(Peer* peer, char* data, int size)
 	{
-		peer->connection.Send(data, size);
+		peer->Send(data, size);
 	}
 
 	void SendReliable(char* data, int size)
 	{
 		if (this->peers.size() > 0)
-			this->peers.begin()->second->connection.SendReliable(data, size);
+			this->peers.begin()->second->SendReliable(data, size);
 	};//this also defaults to first connected peer
 
 	void SendReliable(Peer* peer, char* data, int size)
 	{
-		peer->connection.SendReliable(data, size);
+		peer->SendReliable(data, size);
 	}
 
 	//ok have to make this async, or at least block til network thread gets connection packet
@@ -154,10 +161,10 @@ public:
 	int Connect(Address server_address, char* name, char* password, char** status = 0)
 	{ 
 		Peer* peer = new Peer;
-		peer->connection.Init();
-		peer->connection.state = PEER_CONNECTING;
-		peer->connection.remoteaddr = server_address;
-		peer->connection.connection = &this->connection;
+		peer->Init();
+		peer->state = PEER_CONNECTING;
+		peer->remoteaddr = server_address;
+		peer->connection = &this->connection;
 
 		//add new connection to peer list;
 		this->peers[server_address] = peer;
@@ -182,14 +189,14 @@ public:
 		for (int i = 0; i < 4; i++)//attempt to connect 4 times
 		{
 			//try and request a connection by sending the handshake
-			peer->connection.SendOOB((char*)&p, sizeof(ConnectionRequest));
+			peer->SendOOB((char*)&p, sizeof(ConnectionRequest));
 
-			netlogf("trying to connect to %i.%i.%i.%i:%u\n", (int)peer->connection.remoteaddr.GetA(), (int)peer->connection.remoteaddr.GetB(), (int)peer->connection.remoteaddr.GetC(), (int)peer->connection.remoteaddr.GetD(), (unsigned int)peer->connection.remoteaddr.GetPort());
+			netlogf("trying to connect to %i.%i.%i.%i:%u\n", (int)peer->remoteaddr.GetA(), (int)peer->remoteaddr.GetB(), (int)peer->remoteaddr.GetC(), (int)peer->remoteaddr.GetD(), (unsigned int)peer->remoteaddr.GetPort());
 
 			NetSleep(1000);//wait for answer
 
 			//ok, check state of the new connection
-			if (peer->connection.state == PEER_CONNECTED)
+			if (peer->state == PEER_CONNECTED)
 			{
 				//we are done
 				netlogf("peer is now connected, got packet back from %i.%i.%i.%i:%u\n", (int)sender.GetA(), (int)sender.GetB(), (int)sender.GetC(), (int)sender.GetD(), (unsigned int)sender.GetPort());
@@ -199,18 +206,18 @@ public:
 
 				return 1;
 			}
-			else if (peer->connection.state == PEER_DISCONNECTED)
+			else if (peer->state == PEER_DISCONNECTED)
 			{
 				//need to get reason back
 				if (status)
-					status[0] = "Connection was denied.";
+					status[0] = "Connection Denied";
 				NetSleep(1000);
 
 				//remove the peer
 				this->threadmutex.lock();
 
 				//remove the peer
-				this->peers.erase(this->peers.find(peer->connection.remoteaddr));
+				this->peers.erase(this->peers.find(peer->remoteaddr));
 
 				this->threadmutex.unlock();
 
@@ -251,7 +258,7 @@ public:
 		this->threadmutex.lock();
 
 		//remove the peer
-		this->peers.erase(this->peers.find(peer->connection.remoteaddr));
+		this->peers.erase(this->peers.find(peer->remoteaddr));
 
 		this->threadmutex.unlock();
 
@@ -270,12 +277,12 @@ public:
 			//todo
 			unsigned char id = (unsigned char)NetCommandPackets::Disconnect;
 			//disconnect packet id
-			peer->connection.SendOOB((char*)&id, 1);
+			peer->SendOOB((char*)&id, 1);
 
 			this->OnDisconnect(peer);
 
 			//remove the peer
-			this->peers.erase(this->peers.find(peer->connection.remoteaddr));
+			this->peers.erase(this->peers.find(peer->remoteaddr));
 
 			delete peer;
 		}
@@ -292,11 +299,11 @@ public:
 			auto copy = this->peers;
 			for (auto p : copy)//auto p = this->peers.cbegin(); p != peers.cend(); )
 			{
-				if (p.second->connection.state == PEER_CONNECTED)
+				if (p.second->state == PEER_CONNECTED)
 				{
 					unsigned char id = (unsigned char)NetCommandPackets::Disconnect;
 					//disconnect packet id
-					p.second->connection.SendOOB((char*)&id, 1);
+					p.second->SendOOB((char*)&id, 1);
 				}
 
 				this->OnDisconnect(p.second);
@@ -309,8 +316,10 @@ public:
 		this->threadmutex.unlock();
 	}
 
-	//opens sockets for communication
-	void Open(unsigned short port);
+	//opens sockets for communication, maxpeers describes maximum number of peers connected
+	//even when over this total you can call Connect to establish more connections
+	//but no more incoming connection requests will be filled
+	void Open(unsigned short port, unsigned int max_peers = 99999);
 
 	//closes sockets, and disconnects any connected peers
 	void Close();
@@ -363,11 +372,11 @@ public:
 				//this->peers[
 				netlogf( "Client Connected from %d.%d.%d.%d:%d\n", sender.GetA(), sender.GetB(), sender.GetC(), sender.GetD(), sender.GetPort());
 				Peer* peer = new Peer;
-				peer->connection.remoteaddr = sender;
-				peer->connection.Init();
-				peer->connection.server = true;
-				peer->connection.connection = &this->connection;
-				peer->connection.state = PEER_CONNECTED;
+				peer->remoteaddr = sender;
+				peer->Init();
+				peer->server = true;
+				peer->connection = &this->connection;
+				peer->state = PEER_CONNECTED;
 
 				//send reply
 				char t[500];
@@ -376,7 +385,7 @@ public:
 				msg.WriteInt(NET_MAGIC_ID);//magic
 				msg.WriteByte(1);//success
 				msg.WriteShort(5007);//my port number, todo, changeme
-				peer->connection.SendOOB(t, msg.cursize);
+				peer->SendOOB(t, msg.cursize);
 
 				//connect
 				this->OnConnect(peer, (ConnectionRequest*)p.data);
@@ -437,6 +446,9 @@ private:
 	{
 		if (p->id != NET_PROTOCOL_ID)
 			return "Bad Protocol ID";
+
+		if (this->peers.size() >= this->maxpeers)
+			return "No Open Slots";
 
 		if (this->observer)
 			return this->observer->CanConnect(addr, p);

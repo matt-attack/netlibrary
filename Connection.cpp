@@ -36,7 +36,7 @@ void NetConnection::net_thread(void* data)
 			{
 				client = connection->peers[sender];
 
-				if (client->connection.state == PEER_CONNECTING)
+				if (client->state == PEER_CONNECTING)
 				{
 					//we got our connection response
 					netlog("Got Connection request response!\n");
@@ -56,18 +56,18 @@ void NetConnection::net_thread(void* data)
 							unsigned short port = msg.ReadShort();
 
 							//then mark as connected
-							client->connection.state = PEER_CONNECTED;
+							client->state = PEER_CONNECTED;
 						}
 						else
 						{
-							netlog("got Connection Denied response!\n");
+							netlog("Got Connection Denied response!\n");
 
 							char reason[500];
 							msg.ReadString(reason, 500);
 
 							//check and read error message if is valid at all
 							netlogf("Reason was: %s\n", reason);
-							client->connection.state = PEER_DISCONNECTED;//tell the waitloop we were denied
+							client->state = PEER_DISCONNECTED;//tell the waitloop we were denied
 						}
 					}
 					else
@@ -78,7 +78,7 @@ void NetConnection::net_thread(void* data)
 					continue;//done with this packet
 				}
 
-				client->connection.lastreceivetime = NetGetTime();
+				client->lastreceivetime = NetGetTime();
 
 				int rsequence = *(int*)&buffer[0];
 				if (rsequence == -1)
@@ -86,14 +86,18 @@ void NetConnection::net_thread(void* data)
 					//read in command packets
 					if (buffer[4] == (unsigned char)NetCommandPackets::Disconnect)//packetid of 99 is disconnect
 					{
-						TPacket p;
-						p.data = 0;
-						//memcpy(p.data, buffer+4, size-4);
-						p.size = 0;
-						p.sender = client;
-						p.addr = sender;
-						p.id = 2;
-						connection->incoming.push(p);
+						if (client->state != PEER_DISCONNECTED)
+						{
+							client->state = PEER_DISCONNECTED;
+							TPacket p;
+							p.data = 0;
+							//memcpy(p.data, buffer+4, size-4);
+							p.size = 0;
+							p.sender = client;
+							p.addr = sender;
+							p.id = 2;
+							connection->incoming.push(p);
+						}
 						//netlogf("Client from %d.%d.%d.%d:%d Disconnected\n", sender.GetA(), sender.GetB(), sender.GetC(), sender.GetD(), sender.GetPort());
 
 						//disconnect
@@ -105,13 +109,32 @@ void NetConnection::net_thread(void* data)
 
 						//connection->peers.erase(connection->peers.find(sender));//delete me
 					}
-					else if (buffer[4] == (unsigned char)NetCommandPackets::Ping)
+					else if (buffer[4] == (unsigned char)NetCommandPackets::Ack)
 					{
 						//netlog("[NetCon] got keep alive/ack packet\n");
 
 						int ack = *(int*)&buffer[5];
 						int ackbits = *(int*)&buffer[9];
-						client->connection.ProcessAck(ack, ackbits);
+						client->ProcessAck(ack, ackbits);
+					}
+					else if (buffer[4] == (unsigned char)NetCommandPackets::Ping)
+					{
+						char buffer2[100];
+						NetMsg msg(100, buffer2);
+						msg.WriteByte((unsigned char)NetCommandPackets::Pong);
+
+						//write acks
+						unsigned int time = *(unsigned int*)&buffer[5];
+						msg.WriteLong(time);
+
+						client->SendOOB(buffer2, msg.cursize);
+					}
+					else if (buffer[4] == (unsigned char)NetCommandPackets::Pong)
+					{
+						unsigned int time = *(unsigned int*)&buffer[5];
+						unsigned int rtt = NetGetTime() - time;
+						client->rtt = (client->rtt*2 + rtt*2)/4;
+						//printf("RTT is: %dms Avg: %dms\n", rtt, client->connection.rtt);
 					}
 					else if (buffer[4] == (unsigned char)NetCommandPackets::ConnectionRequest)//is another connection request packet, ignore it)
 					{
@@ -134,10 +157,10 @@ void NetConnection::net_thread(void* data)
 				}
 
 				std::vector<Packet> returns;
-				client->connection.ProcessPacket(buffer, size, returns);
+				client->ProcessPacket(buffer, size, returns);
 
 				//push all packets to the return queue
-				for (int i = 0; i < returns.size(); i++)
+				for (unsigned int i = 0; i < returns.size(); i++)
 				{
 					TPacket p;
 					auto pak = returns[i];
@@ -157,6 +180,13 @@ void NetConnection::net_thread(void* data)
 				{
 					netlog("[NetCon] Got invalid connection request!\n");
 					continue;
+				}
+
+				if (connection->peers.size() >= connection->maxpeers)
+				{
+					//connection wont go through, too many peers
+
+
 				}
 
 				char* msg = connection->CanConnect(sender, p);
@@ -220,8 +250,8 @@ void NetConnection::net_thread(void* data)
 		//do keep alives and handle timeouts
 		for (auto ii: connection->peers)
 		{
-			int lastsendtime = ii.second->connection.lastsendtime;
-			if ((lastsendtime + NET_PING_INTERVAL < NetGetTime() || ii.second->connection.unsent_acks > 16) && ii.second->connection.state == PEER_CONNECTED)
+			unsigned int lastsendtime = ii.second->lastsendtime;
+			if ((lastsendtime + NET_PING_INTERVAL < NetGetTime() || ii.second->unsent_acks > 16) && ii.second->state == PEER_CONNECTED)
 			{
 				//send keep alive packet, with acks
 				//if (ii.second->connection.unsent_acks > 16)
@@ -229,31 +259,44 @@ void NetConnection::net_thread(void* data)
 				//else
 				//netlog("it has been a while since packet last sent, sending keepalive/ack\n");
 
-				ii.second->connection.unsent_acks = 0;
+				ii.second->unsent_acks = 0;
 
 				char buffer[500];
 				NetMsg msg(500, buffer);
+				msg.WriteByte((unsigned char)NetCommandPackets::Ack);
+
+				//write acks
+				msg.WriteInt(ii.second->recieved_sequence);
+				msg.WriteInt(ii.second->GetAckBits());
+
+				ii.second->SendOOB(buffer, msg.cursize);
+
+				ii.second->lastsendtime = NetGetTime();
+			}
+
+			if (ii.second->lastpingtime + NET_PING_INTERVAL < NetGetTime() && ii.second->state == PEER_CONNECTED)
+			{
+				ii.second->lastpingtime = NetGetTime();
+
+				char buffer[100];
+				NetMsg msg(100, buffer);
 				msg.WriteByte((unsigned char)NetCommandPackets::Ping);
 
 				//write acks
-				msg.WriteInt(ii.second->connection.recieved_sequence);
-				msg.WriteInt(ii.second->connection.GetAckBits());
+				msg.WriteLong(NetGetTime());
 
-				ii.second->connection.SendOOB(buffer, msg.cursize);
-
-				ii.second->connection.lastsendtime = NetGetTime();
+				ii.second->SendOOB(buffer, msg.cursize);
 			}
 
-			if (ii.second->connection.lastreceivetime < NetGetTime() - connection->timeout && ii.second->connection.state == PEER_CONNECTED)
+			if (ii.second->lastreceivetime < (NetGetTime() - connection->timeout < 0 ? 0 : NetGetTime() - connection->timeout) && ii.second->state == PEER_CONNECTED)
 			{
-				//player timed out
-				netlog("whoops\n");
-
+				//connection timed out
 				Peer* client = ii.second;
-				Address sender = ii.second->connection.remoteaddr;
+				Address sender = ii.second->remoteaddr;
 
 				netlogf("Client from %d.%d.%d.%d:%d Timed Out\n", sender.GetA(), sender.GetB(), sender.GetC(), sender.GetD(), sender.GetPort());
 
+				client->state = PEER_DISCONNECTED;
 				//disconnect
 				//connection->OnDisconnect(client);
 
@@ -284,10 +327,11 @@ void NetConnection::net_thread(void* data)
 			for (auto ii: connection->peers)
 			{
 				//ok, poll the connection
-				totalout += ii.second->connection.connection->sent;
-				ii.second->connection.connection->sent = 0;
+				totalout += ii.second->connection->sent;
+				ii.second->connection->sent = 0;
 				break;
 			}
+			connection->sent += totalout;
 
 			int deltain = connection->connection.received - connection->lastreceived;
 			int deltaout = totalout;//connection->connection.sent - connection->lastsent;
@@ -304,7 +348,7 @@ void NetConnection::net_thread(void* data)
 
 		connection->threadmutex.unlock();
 
-		NetSleep(10);//sleep then poll again
+		NetSleep(1);//sleep then poll again
 	}
 	netlog("Network thread exited\n");
 
@@ -321,18 +365,22 @@ void NetConnection::SendPackets()//actually sends to the server
 
 	for (auto client : this->peers)
 	{
-		client.second->connection.SendPackets();
+		client.second->SendPackets();
 	}
 
 	this->sendingmutex.unlock();
 }
 
-void NetConnection::Open(unsigned short port)
+void NetConnection::Open(unsigned short port, unsigned int maxpeers)
 {
-	NetworkInit();//does this in case we havent already
+	NetworkInit();//do this in case we havent already
 
 	//reset stats
 	lastreceived = lastupdate = lastsent = lasttcp = 0;
+	sent = recieved = 0;
+
+	//setup maxpeers
+	this->maxpeers = maxpeers;
 
 	this->running = true;//signal for thread
 
@@ -370,9 +418,9 @@ void NetConnection::Send(Peer* client, char* data, unsigned int size, bool OOB)
 	if (OOB)
 	{
 		netlog("[Server] Sent OOB Packet\n");
-		client->connection.SendOOB(data, size);
+		client->SendOOB(data, size);
 		return;
 	}
 
-	client->connection.Send(data, size);
+	client->Send(data, size);
 }

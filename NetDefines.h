@@ -8,10 +8,16 @@
 #define NET_FRAGMENT_SIZE 1000//use a header size less than the MTU of the network (header is a maximum of 15 bytes)
 #define NET_MAX_FRAGMENTS 1000//1 million byte packet limit, prevents someone using up lots of memory by sending super large split packets
 
+//uncomment these if you want them applied
+//#define NET_VERBOSE_DEBUG//prints stuff about packet encoding/decoding
+
+
 enum class NetCommandPackets: unsigned short
 {
+	Ping = 95,
+	Pong = 96,
 	ConnectionRequest = 97,
-	Ping = 98,
+	Ack = 98,
 	Disconnect = 99
 };
 

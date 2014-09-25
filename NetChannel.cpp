@@ -7,7 +7,7 @@
 #ifdef _DEBUG   
 #ifndef DBG_NEW      
 #define DBG_NEW new ( _NORMAL_BLOCK , __FILE__ , __LINE__ )     
-#define new DBG_NEW   
+#define new DBG_NEW
 #endif
 #endif
 
@@ -220,7 +220,9 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 					return;
 				}
 
+#ifdef NET_VERBOSE_DEBUG
 				netlogf("[Client] Got ordered reliable split packet %d of %d\n", frag+1, numfrags);
+#endif
 
 				//we need to copy data into a buffer
 				int startseq = rsequence - frag;
@@ -247,18 +249,21 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 
 				if (reliable_frags[startseq%20].frags_recieved == numfrags)
 				{
+#ifdef NET_VERBOSE_DEBUG
 					netlog("[Client] We got the whole split reliable packet\n");
+#endif
 					Packet p;
 					p.reliable = true;
 					p.size = reliable_frags[startseq%20].curpos;//frags_recieved*(FRAGMENT_SIZE-1) + (recvsize - 16);//reliable_frags[startseq%20].frags_recieved*FRAGMENT_SIZE;//approximate
 					p.data = reliable_frags[startseq%20].data;
 					reliable_frags[startseq%20].data = 0;
-					//container.push_back(p);
 
 					if (this->incoming_ordered_sequence[chan] + 1 == seq)
 					{
 						this->incoming_ordered_sequence[chan]++;
+#ifdef NET_VERBOSE_DEBUG
 						netlogf("Pushed ordered pack %d\n", incoming_ordered_sequence[chan]);
+#endif
 						container.push_back(p);
 
 						//check map to see if next packet is availible
@@ -268,7 +273,9 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 							this->ordered_buffer[chan].erase(this->ordered_buffer[chan].find(this->incoming_ordered_sequence[chan]+1));
 
 							this->incoming_ordered_sequence[chan]++;
+#ifdef NET_VERBOSE_DEBUG
 							netlogf("Pushed ordered pack %d\n", incoming_ordered_sequence[chan]);
+#endif
 						}
 					}
 					else
@@ -285,8 +292,9 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 
 				int frag = *(unsigned short*)&buffer[12];
 				int numfrags = *(unsigned short*)&buffer[14];
-
+#ifdef NET_VERBOSE_DEBUG
 				netlogf("[Client] Got reliable split packet %d of %d\n", frag+1, numfrags);
+#endif
 
 				//we need to copy data into a buffer
 				int startseq = rsequence - frag;
@@ -313,7 +321,9 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 
 				if (reliable_frags[startseq%20].frags_recieved == numfrags)
 				{
+#ifdef NET_VERBOSE_DEBUG
 					netlog("[Client] We got the whole split reliable packet\n");
+#endif
 					Packet p;
 					p.reliable = true;
 					p.size = reliable_frags[startseq%20].curpos;//frags_recieved*(FRAGMENT_SIZE-1) + (recvsize - 16);//reliable_frags[startseq%20].frags_recieved*FRAGMENT_SIZE;//approximate
@@ -327,10 +337,12 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 		{
 			if (rsequence & 1<<29)
 			{
-				if (recvsize < 17)
+				if (recvsize < 15)
 					return;//bad packet
 
+#ifdef NET_VERBOSE_DEBUG
 				netlog("[NetChan] Got Ordered Reliable Packet\n");
+#endif
 				//size at 15
 				//chan at 12
 				//seq at 13
@@ -339,15 +351,17 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 
 				Packet p;
 				p.reliable = true;
-				p.size = recvsize - (14+3);
+				p.size = recvsize - (14+1);
 
 				//lets make copy
 				p.data = new char[p.size];
-				memcpy(p.data, &buffer[14+3], p.size);
+				memcpy(p.data, &buffer[14+1], p.size);
 				if (this->incoming_ordered_sequence[chan] + 1 == seq)
 				{
 					this->incoming_ordered_sequence[chan]++;
+#ifdef NET_VERBOSE_DEBUG
 					netlogf("Pushed ordered pack %d\n", incoming_ordered_sequence[chan]);
+#endif
 					container.push_back(p);
 
 					//check map to see if next packet is availible
@@ -357,7 +371,9 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 						this->ordered_buffer[chan].erase(this->ordered_buffer[chan].find(this->incoming_ordered_sequence[chan]+1));
 
 						this->incoming_ordered_sequence[chan]++;
+#ifdef NET_VERBOSE_DEBUG
 						netlogf("Pushed ordered pack %d\n", incoming_ordered_sequence[chan]);
+#endif
 					}
 				}
 				else
@@ -368,17 +384,19 @@ void NetChannel::ProcessPacket(char* buffer, int recvsize, std::vector<Packet>& 
 			}
 			else
 			{
-				if (recvsize < 14)
+				if (recvsize < 12)
 					return;//bad packet
 
+#ifdef NET_VERBOSE_DEBUG
 				netlog("[Client] Got Reliable packet\n");
+#endif
 
 				//not split packet, or ordered
 				Packet p;
 				p.reliable = true;
-				p.size = recvsize - 14;
+				p.size = recvsize - 12;
 				p.data = new char[p.size];
-				memcpy(p.data,&buffer[14], p.size);
+				memcpy(p.data,&buffer[12], p.size);
 				container.push_back(p);
 			}
 		}
@@ -449,7 +467,9 @@ bool NetChannel::ProcessHeader(char* data, int size)//this processes the header 
 					return false;//we already acked this, dont do anything with it
 
 				//netlogf("[NetCon] Got reliable resend packet %d\n", id);
+#ifdef NET_VERBOSE_DEBUG
 				netlogf("[%s] Got reliable resend packet %d\n", this->server ? "Server" : "Client", rsequence);
+#endif
 				this->unsent_acks++;
 				this->acks[id] = true;
 			}
@@ -511,6 +531,7 @@ void NetChannel::SendPackets()//actually sends to the server
 		msg.WriteInt(this->GetAckBits());//then write bits with last sequences
 
 		//ok, pack in the data, make sure we dont pack too much
+		sendingmutex.lock();
 		while(this->sending.empty() == false)
 		{
 			Packet pack = this->sending.front();
@@ -593,6 +614,7 @@ void NetChannel::SendPackets()//actually sends to the server
 				break;
 			}
 		}
+		sendingmutex.unlock();
 #ifdef NET_VERBOSE_DEBUG
 		netlogf("[%s] Send Unreliable Payload of %d bytes.\n", this->server ? "Server" : "Client", msg.cursize);
 #endif
@@ -604,18 +626,19 @@ void NetChannel::SendPackets()//actually sends to the server
 void NetChannel::SendReliables()//actually sends to the server
 {
 	//ok, lets check if we need to resend anything
-	bool received = false;
-	for (int i = 32; i >= 0; i--)
+	int received_seq = -1;
+	for (int i = 0; i < 33; i++)
 	{ 
 		if (window[i].recieved == false && window[i].data)
 		{
-			//if we got a ack for packet after this one and still havent
+			//if we got an ack for packet after this one and still havent
 			//received ack for this one, we should resend
-			if ((received == true && window[i].resends == 0) || (window[i].sendtime + 1000 < NetGetTime()))
+			unsigned int minrtt = this->rtt > 100 ? rtt*2 : 100;
+			if ((received_seq > (int)window[i].sequence && window[i].resends == 0) || (window[i].sendtime + minrtt < NetGetTime()))
 			{
 				this->lastsendtime = NetGetTime();
 
-				//netlogf("[%s] Resending sequence %d\n", this->server ? "Server" : "Client", window[i].sequence);
+				netlogf("[%s] Resending sequence %d\n", this->server ? "Server" : "Client", window[i].sequence);
 
 				bool fragmented = false;
 				if (window[i].numfragments > 1)
@@ -655,11 +678,11 @@ void NetChannel::SendReliables()//actually sends to the server
 				}
 				else
 				{
-					msg.WriteShort(window[i].size);
+					//msg.WriteShort(window[i].size);
 					msg.WriteData(window[i].data, window[i].size);
 				}
 
-				window[i].sendtime = NetGetTime()-500;//resend faster
+				window[i].sendtime = NetGetTime();//+500;
 				window[i].resends += 1;
 
 				this->unsent_acks = 0;
@@ -668,7 +691,8 @@ void NetChannel::SendReliables()//actually sends to the server
 		}
 		else if (window[i].recieved == true && window[i].data)
 		{
-			received = true;
+			if ((int)window[i].sequence > received_seq)
+				received_seq = window[i].sequence;
 		}
 	}
 
@@ -677,8 +701,6 @@ void NetChannel::SendReliables()//actually sends to the server
 
 	if (this->sequence == 0)
 		this->sequence = 1;
-
-	//derp only sends one at a time
 
 	while(this->reliable_sending.empty() == false)
 	{
@@ -778,7 +800,7 @@ void NetChannel::SendReliables()//actually sends to the server
 				}
 				else
 				{
-					msg.WriteShort(pack.size);
+					//msg.WriteShort(pack.size);
 					msg.WriteData(pack.data, pack.size);
 				}
 

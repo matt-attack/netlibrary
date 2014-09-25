@@ -161,21 +161,21 @@ public:
 	void SetVariance(float seconds)
 	{
 #ifdef NETSIMULATE
-		variance = seconds*1000.0f;
+		variance = (int)(seconds*1000.0f);
 #endif
 	}
 
 	void SetRTT(float seconds)
 	{
 #ifdef NETSIMULATE
-		rtt = seconds*1000.0f;
+		rtt = (int)(seconds*1000.0f);
 #endif
 	}
 
 	void SetDrop(float frac)
 	{
 #ifdef NETSIMULATE
-		drop = frac*100.0f;
+		drop = (int)(frac*100.0f);
 #endif
 	}
 private:

@@ -223,7 +223,6 @@ bool Socket::Send( const Address & destination, const void * data, int size )
 	else
 		delay = rtt;
 
-
 	if (delay == 0)
 	{
 		if ( socket == 0 )
