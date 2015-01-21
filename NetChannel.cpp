@@ -13,6 +13,43 @@
 
 #include "NetChannel.h"
 
+void NetChannel::Init()
+{
+	this->rtt = 100;//good starting value
+	this->lastpingtime = 0;
+	this->unsent_acks = 0;
+	this->lastsendtime = 0;
+	this->server = false;
+	this->sequence = this->last_acked = this->recieved_sequence = this->split_sequence = 0;
+	for (int i = 0; i < 33; i++)
+	{
+		this->window[i].data = 0;
+		this->window[i].sendtime = 0;
+		this->window[i].size = 0;
+		this->window[i].recieved = false;
+
+		if (i < 32)
+			this->acks[i] = false;
+	}
+
+	for (int i = 0; i < 16; i++)
+	{
+		this->incoming_ordered_sequence[i] = -1;
+		this->outgoing_ordered_sequence[i] = 0;
+	}
+
+	this->unreliable_fragment.data = 0;
+	this->unreliable_fragment.sequence = -1;
+
+	for (auto& i: this->reliable_frags)
+	{
+		i.data = 0;
+		i.sequence = 0;
+		i.frags_recieved = 0;
+	}
+	this->lastreceivetime = NetGetTime();
+}
+
 void NetChannel::Cleanup()
 {
 	for (int i = 0; i < 33; i++)
@@ -508,6 +545,8 @@ bool NetChannel::ProcessHeader(char* data, int size)//this processes the header 
 void NetChannel::SendPackets()//actually sends to the server
 {
 	//PROFILE("SendPackets")
+	std::lock_guard<std::mutex> lock(sendingmutex);
+
 	this->SendReliables();
 	if (this->sending.empty() == true)
 		return;
@@ -531,7 +570,6 @@ void NetChannel::SendPackets()//actually sends to the server
 		msg.WriteInt(this->GetAckBits());//then write bits with last sequences
 
 		//ok, pack in the data, make sure we dont pack too much
-		sendingmutex.lock();
 		while(this->sending.empty() == false)
 		{
 			Packet pack = this->sending.front();
@@ -614,7 +652,6 @@ void NetChannel::SendPackets()//actually sends to the server
 				break;
 			}
 		}
-		sendingmutex.unlock();
 #ifdef NET_VERBOSE_DEBUG
 		netlogf("[%s] Send Unreliable Payload of %d bytes.\n", this->server ? "Server" : "Client", msg.cursize);
 #endif
@@ -704,11 +741,12 @@ void NetChannel::SendReliables()//actually sends to the server
 
 	while(this->reliable_sending.empty() == false)
 	{
+		RPacket front = this->reliable_sending.front();
 		bool fragmented = false;
 		int numfrags = 1;
-		if (this->reliable_sending.front().size > NET_FRAGMENT_SIZE)
+		if (front.size > NET_FRAGMENT_SIZE)
 		{
-			numfrags = this->reliable_sending.front().size/NET_FRAGMENT_SIZE + 1;
+			numfrags = front.size/NET_FRAGMENT_SIZE + 1;
 			fragmented = true;
 		}
 		int fragment = 0;
@@ -750,7 +788,7 @@ void NetChannel::SendReliables()//actually sends to the server
 			seq |= 1<<31;//this is for if reliable;
 			if (fragmented)
 				seq |= 1<<30;//this signifies split packet
-			if (this->reliable_sending.front().channel != -1)
+			if (front.channel != -1)
 				seq |= 1<<29;
 
 			//dont send this if not reliable
@@ -759,10 +797,10 @@ void NetChannel::SendReliables()//actually sends to the server
 			msg.WriteInt(recieved_sequence);
 			msg.WriteInt(this->GetAckBits());//then write bits with last recieved sequences
 
-			if (this->reliable_sending.front().channel != -1)
+			if (front.channel != -1)
 			{
-				msg.WriteByte(this->reliable_sending.front().channel);
-				msg.WriteShort(this->outgoing_ordered_sequence[this->reliable_sending.front().channel]);
+				msg.WriteByte(front.channel);
+				msg.WriteShort(this->outgoing_ordered_sequence[front.channel]);
 			}
 
 			if (fragmented)
@@ -773,14 +811,14 @@ void NetChannel::SendReliables()//actually sends to the server
 
 			//fill out latest window slot
 			window[mw].recieved = false;
-			window[mw].data = this->reliable_sending.front().data;
-			window[mw].size = this->reliable_sending.front().size;
+			window[mw].data = front.data;
+			window[mw].size = front.size;
 			window[mw].sendtime = NetGetTime();
 			window[mw].sequence = this->sequence;
 			window[mw].resends = 0;
 			window[mw].fragment = fragment;
 			window[mw].numfragments = numfrags;
-			window[mw].channel = this->reliable_sending.front().channel;
+			window[mw].channel = front.channel;
 			if (window[mw].channel != -1)
 				window[mw].channel_sequence = this->outgoing_ordered_sequence[window[mw].channel];
 

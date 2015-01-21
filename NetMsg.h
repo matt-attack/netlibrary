@@ -1,7 +1,8 @@
 #ifndef _NETMSG_HEADER
 #define _NETMSG_HEADER
 
-#include <string>
+#include <string.h>
+#include <stdio.h>
 
 #ifdef _DEBUG
 #include <assert.h>

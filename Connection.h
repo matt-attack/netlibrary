@@ -83,14 +83,16 @@ public:
 
 class NetConnection
 {
-	std::mutex threadmutex;
-	std::mutex queuemutex;
-	std::mutex sendingmutex;
+	std::mutex peerincomingmutex;
+	//std::mutex queuemutex;//lock for the incoming packet queue
+	//std::mutex sendingmutex;
 
 	std::thread thread;
 
 	bool running;
 	std::queue<TPacket> incoming;
+
+	std::string password;
 	
 	//settings
 	unsigned int timeout;
@@ -116,6 +118,16 @@ public:
 	~NetConnection()
 	{
 		this->Close();
+	}
+
+	void SetPassword(const char* pass)
+	{
+		this->password = pass;
+	}
+
+	const char* GetPassword()
+	{
+		return this->password.c_str();
 	}
 
 	//add peer argument to send functions and way to get peers without accessing peers object
@@ -214,12 +226,12 @@ public:
 				NetSleep(1000);
 
 				//remove the peer
-				this->threadmutex.lock();
+				this->peerincomingmutex.lock();
 
 				//remove the peer
 				this->peers.erase(this->peers.find(peer->remoteaddr));
 
-				this->threadmutex.unlock();
+				this->peerincomingmutex.unlock();
 
 				return -1;
 			}
@@ -255,12 +267,12 @@ public:
 			status[0] = "Connection Failed After 4 Retries.";
 		NetSleep(1000);
 
-		this->threadmutex.lock();
+		this->peerincomingmutex.lock();
 
 		//remove the peer
 		this->peers.erase(this->peers.find(peer->remoteaddr));
 
-		this->threadmutex.unlock();
+		this->peerincomingmutex.unlock();
 
 		delete peer;
 
@@ -271,7 +283,7 @@ public:
 	//will call the on disconnect hooks
 	void Disconnect(Peer* peer = 0)
 	{
-		this->threadmutex.lock();
+		this->peerincomingmutex.lock();
 		if (peer)
 		{
 			//todo
@@ -297,7 +309,7 @@ public:
 
 			//send message that we are disconnecting
 			auto copy = this->peers;
-			for (auto p : copy)//auto p = this->peers.cbegin(); p != peers.cend(); )
+			for (auto p : copy)
 			{
 				if (p.second->state == PEER_CONNECTED)
 				{
@@ -313,7 +325,7 @@ public:
 				delete p.second;
 			}
 		}
-		this->threadmutex.unlock();
+		this->peerincomingmutex.unlock();
 	}
 
 	//opens sockets for communication, maxpeers describes maximum number of peers connected
@@ -354,18 +366,19 @@ public:
 		if (this->incoming.size() == 0)
 			return 0;//no messages to parse
 
+		peerincomingmutex.lock();
 		while (true)
 		{
-			this->queuemutex.lock();//ok, dont put locks in locks, and then the same locks in locks in the opposite order somewhere else
+			//this->queuemutex.lock();//ok, dont put locks in locks, and then the same locks in locks in the opposite order somewhere else
 			TPacket p = this->incoming.front();
 			this->incoming.pop();
-			this->queuemutex.unlock();
+			//this->queuemutex.unlock();
 
 			//ok, introduce callbacks here as different "packets"
 			if (p.id == 1)
 			{
 				//connect
-				this->threadmutex.lock();
+				//this->threadmutex.lock();
 
 				Address sender = p.addr;
 
@@ -391,13 +404,13 @@ public:
 				this->OnConnect(peer, (ConnectionRequest*)p.data);
 
 				this->peers[p.addr] = peer;
-				this->threadmutex.unlock();
+				//this->threadmutex.unlock();
 
 				delete[] p.data;
 			}
 			else if (p.id == 2)
 			{
-				this->threadmutex.lock();//Enter();
+				//this->threadmutex.lock();
 
 				netlogf("Client from %d.%d.%d.%d:%d Disconnected\n", p.addr.GetA(), p.addr.GetB(), p.addr.GetC(), p.addr.GetD(), p.addr.GetPort());
 
@@ -408,24 +421,25 @@ public:
 
 				delete p.sender;
 
-				this->threadmutex.unlock();//Leave();
+				//this->threadmutex.unlock();
 			}
 			else
 			{
 				size = p.size;
 				sender = p.sender;
-
+				peerincomingmutex.unlock();
 				return p.data;
 			}
-
 
 			if (this->incoming.size() == 0)
 			{
 				size = 0;
 				sender = 0;
+				peerincomingmutex.unlock();
 				return 0;
 			}
 		}
+		peerincomingmutex.unlock();
 	};
 
 private:
@@ -446,6 +460,12 @@ private:
 	{
 		if (p->id != NET_PROTOCOL_ID)
 			return "Bad Protocol ID";
+
+		if (this->password.length() > 0)
+		{
+			if (this->password.compare(p->password) != 0)
+				return "Incorrect Password";
+		}
 
 		if (this->peers.size() >= this->maxpeers)
 			return "No Open Slots";

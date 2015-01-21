@@ -22,10 +22,9 @@ void NetConnection::net_thread(void* data)
 	char buffer[2048];
 	while(connection->running)
 	{
-		connection->threadmutex.lock();
+		connection->peerincomingmutex.lock();
 
 		//for each client, read in all packets
-		connection->queuemutex.lock();
 		int size;
 		Address sender;
 		Peer* client;
@@ -182,13 +181,6 @@ void NetConnection::net_thread(void* data)
 					continue;
 				}
 
-				if (connection->peers.size() >= connection->maxpeers)
-				{
-					//connection wont go through, too many peers
-
-
-				}
-
 				char* msg = connection->CanConnect(sender, p);
 				if (msg == 0)//no error message
 				{
@@ -242,8 +234,7 @@ void NetConnection::net_thread(void* data)
 				}
 			}
 		}
-		connection->queuemutex.unlock();
-
+		
 		//send queued packets
 		connection->SendPackets();
 
@@ -346,7 +337,7 @@ void NetConnection::net_thread(void* data)
 			connection->lastsent = totalout;//connection->connection.sent;
 		}
 
-		connection->threadmutex.unlock();
+		connection->peerincomingmutex.unlock();
 
 		NetSleep(1);//sleep then poll again
 	}
@@ -357,7 +348,7 @@ void NetConnection::net_thread(void* data)
 
 void NetConnection::SendPackets()//actually sends to the server
 {
-	this->sendingmutex.lock();
+	//this->sendingmutex.lock();
 
 #ifdef NETSIMULATE
 	this->connection.SendLaggedPackets();
@@ -368,7 +359,7 @@ void NetConnection::SendPackets()//actually sends to the server
 		client.second->SendPackets();
 	}
 
-	this->sendingmutex.unlock();
+	//this->sendingmutex.unlock();
 }
 
 void NetConnection::Open(unsigned short port, unsigned int maxpeers)

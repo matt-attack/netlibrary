@@ -34,6 +34,7 @@
 
 //uncomment and change these for simulation of bad network conditions
 #define NETSIMULATE
+#include <mutex>
 
 //must call this before any networking calls will work
 bool NetworkInit();
@@ -132,6 +133,7 @@ struct laggedpacket
 class Socket
 {
 #ifdef NETSIMULATE
+	std::mutex laggedmutex;
 	std::priority_queue<laggedpacket> lagged;
 #endif
 	unsigned short port;

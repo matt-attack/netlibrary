@@ -108,42 +108,7 @@ public:
 		this->Cleanup();
 	}
 
-	void Init()
-	{
-		this->rtt = 100;//good starting value
-		this->lastpingtime = 0;
-		this->unsent_acks = 0;
-		this->lastsendtime = 0;
-		this->server = false;
-		this->sequence = this->last_acked = this->recieved_sequence = this->split_sequence = 0;
-		for (int i = 0; i < 33; i++)
-		{
-			this->window[i].data = 0;
-			this->window[i].sendtime = 0;
-			this->window[i].size = 0;
-			this->window[i].recieved = false;
-
-			if (i < 32)
-				this->acks[i] = false;
-		}
-
-		for (int i = 0; i < 16; i++)
-		{
-			this->incoming_ordered_sequence[i] = -1;
-			this->outgoing_ordered_sequence[i] = 0;
-		}
-
-		this->unreliable_fragment.data = 0;
-		this->unreliable_fragment.sequence = -1;
-
-		for (auto& i: this->reliable_frags)
-		{
-			i.data = 0;
-			i.sequence = 0;
-			i.frags_recieved = 0;
-		}
-		this->lastreceivetime = NetGetTime();
-	}
+	void Init();
 
 	void Cleanup();
 
@@ -215,11 +180,12 @@ public:
 		sendingmutex.unlock();
 	}
 
-	//if you call this, you dont need to call send reliables
+	//this calls sendreliables
 	void SendPackets();
-	void SendReliables();
+
 
 private:
+	void SendReliables();
 
 	//little wrapper to keep track of stuff, use me
 	inline void Send(const Address& addr, const char* data, const int size)

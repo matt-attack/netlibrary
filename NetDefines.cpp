@@ -8,7 +8,7 @@
 
 void netlog(char* o)
 {
-	OutputDebugString(o);
+	OutputDebugStringA(o);
 }
 
 void netlogf(const char* fmt, ...)
@@ -20,7 +20,7 @@ void netlogf(const char* fmt, ...)
 	vsnprintf(msg, sizeof(msg), fmt, argptr);
 	va_end (argptr);
 
-	OutputDebugString(msg);
+	OutputDebugStringA(msg);
 }
 
 void NetSleep(unsigned int ms)
@@ -57,6 +57,7 @@ void NetSleep(unsigned int ms)
 	usleep(ms*1000);
 }
 
+#include <sys/time.h>
 unsigned int NetGetTime()
 {
 	struct timeval tv;

@@ -116,12 +116,14 @@ Socket::~Socket()
 {
 	Close();
 #ifdef NETSIMULATE
+	this->laggedmutex.lock();
 	while (this->lagged.size() > 0)
 	{
 		auto p = this->lagged.top();
 		this->lagged.pop();
 		delete[] p.data;
 	}
+	this->laggedmutex.unlock();
 #endif
 }
 
@@ -239,6 +241,7 @@ bool Socket::Send( const Address & destination, const void * data, int size )
 	}
 	else
 	{
+		this->laggedmutex.lock();
 		laggedpacket p;
 		p.addr = destination;
 		p.data = new char[size];
@@ -246,6 +249,7 @@ bool Socket::Send( const Address & destination, const void * data, int size )
 		p.sendtime = NetGetTime() + delay;
 		memcpy(p.data, data, size);
 		this->lagged.push(p);
+		this->laggedmutex.unlock();
 	}
 
 	return true;
@@ -259,6 +263,7 @@ void Socket::SendLaggedPackets()
 	if ( socket == 0 )
 		return;
 
+	this->laggedmutex.lock();
 	while (this->lagged.empty() == false)
 	{
 		laggedpacket ii = this->lagged.top();//front();
@@ -275,8 +280,12 @@ void Socket::SendLaggedPackets()
 			this->lagged.pop();
 		}
 		else
+		{
+			this->laggedmutex.unlock();
 			return;
+		}
 	}
+	this->laggedmutex.unlock();
 #endif
 };
 
@@ -285,7 +294,9 @@ int Socket::Receive( Address & sender, void * data, int size )
 	if ( socket == 0 )
 		return false;
 
+#ifdef _WIN32
 	typedef int socklen_t;
+#endif
 
 	sockaddr_in from;
 	socklen_t fromLength = sizeof( from );
@@ -503,6 +514,18 @@ bool SocketTCP::Connect( Address server )
 		return false;
 	}
 
+#ifndef _WIN32
+	//only need this on linux
+	int boo = 1;
+	if (setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, (char *)&boo,
+		sizeof(int)) < 0)
+	{
+		printf("setsockopt failed errno: %d\n", errno);
+		Close();
+		return false;
+	}
+#endif
+
 	// set non-blocking i
 #ifdef _WIN32
 	DWORD nonBlocking = 1;
@@ -529,7 +552,11 @@ SocketTCP* SocketTCP::Accept(Address& sender)//returns sock if successful, and s
 	address.sin_addr.s_addr = INADDR_ANY;
 	address.sin_port = htons( 0 );//(unsigned short) port );
 
+#ifdef _WIN32
 	int size = sizeof(sockaddr_in);
+#else
+	unsigned int size = sizeof(sockaddr_in);
+#endif
 	fd_set rfds;
 	FD_ZERO(&rfds);
 	FD_SET(socket, &rfds);
@@ -582,10 +609,22 @@ bool SocketTCP::Listen(unsigned short port)
 	socket = ::socket( AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if ( socket <= 0 )
 	{
-		//log( "failed to create socket\n" );
+		printf( "failed to create socket errno: %d\n", errno);
 		socket = 0;
 		return false;
 	}
+
+#ifndef _WIN32
+	//only need this on linux
+	int boo = 1;
+	if (setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, (char *)&boo,
+		sizeof(int)) < 0)
+	{
+		printf("setsockopt failed errno: %d\n", errno);
+		Close();
+		return false;
+	}
+#endif
 
 	// bind to port
 	sockaddr_in address;
@@ -596,8 +635,9 @@ bool SocketTCP::Listen(unsigned short port)
 	if ( bind( socket, (const sockaddr*) &address, sizeof(sockaddr_in) ) < 0 )
 	{
 #ifdef _WIN32
-		printf( "failed to bind socket\n" );
 		fprintf(stderr, "bind() failed, Error: %d\n", WSAGetLastError());
+#else
+		printf( "failed to bind socket errno: %d\n", errno );
 #endif
 		Close();
 		return false;
@@ -704,7 +744,7 @@ void SocketTCP::Close()
 {
 	if ( socket != 0 )
 	{
-		//log("TCP Connection Closed...\n");
+		printf("TCP Connection Closed...\n");
 #ifdef _WIN32
 		if(closesocket( socket ) != 0)
 #else
@@ -713,6 +753,8 @@ void SocketTCP::Close()
 		{
 #ifdef _WIN32
 			fprintf(stderr, "closesocket() failed, Error: %d\n", WSAGetLastError());
+#else
+			printf( "failed to close socket errno: %d\n", errno );
 #endif
 		}
 		socket = 0;
