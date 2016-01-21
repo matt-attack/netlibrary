@@ -21,6 +21,7 @@ struct ConnectionRequest//sent by client to request a join
 	int id;//use a random number to ensure that people cant spam random packets and fake joining players
 	char plyname[50];
 	char password[50];
+	int players;//number of players from this connection
 };
 #pragma pack(pop)
 
@@ -84,9 +85,7 @@ public:
 class NetConnection
 {
 	std::mutex peerincomingmutex;
-	//std::mutex queuemutex;//lock for the incoming packet queue
-	//std::mutex sendingmutex;
-
+	
 	std::thread thread;
 
 	bool running;
@@ -170,7 +169,7 @@ public:
 	//connection packet from packet queue
 	//blocking function
 	//need to change this to just add new peer connection
-	int Connect(Address server_address, char* name, char* password, char** status = 0)
+	int Connect(Address server_address, const char* name, const char* password, int players = 1, char** status = 0)
 	{ 
 		Peer* peer = new Peer;
 		peer->Init();
@@ -188,6 +187,7 @@ public:
 		ConnectionRequest p;
 		p.packid = (unsigned char)NetCommandPackets::ConnectionRequest;
 		p.id = NET_PROTOCOL_ID;
+		p.players = players;
 		strncpy(p.plyname, name, 50);
 		if (password)
 			strncpy(p.password, password, 50);
@@ -361,86 +361,7 @@ public:
 	}*/
 
 	//this returns a char array of the latest packet received, delete[] when finished with it
-	char* Receive(Peer*& sender, int& size)
-	{
-		if (this->incoming.size() == 0)
-			return 0;//no messages to parse
-
-		peerincomingmutex.lock();
-		while (true)
-		{
-			//this->queuemutex.lock();//ok, dont put locks in locks, and then the same locks in locks in the opposite order somewhere else
-			TPacket p = this->incoming.front();
-			this->incoming.pop();
-			//this->queuemutex.unlock();
-
-			//ok, introduce callbacks here as different "packets"
-			if (p.id == 1)
-			{
-				//connect
-				//this->threadmutex.lock();
-
-				Address sender = p.addr;
-
-				//this->peers[
-				netlogf( "Client Connected from %d.%d.%d.%d:%d\n", sender.GetA(), sender.GetB(), sender.GetC(), sender.GetD(), sender.GetPort());
-				Peer* peer = new Peer;
-				peer->remoteaddr = sender;
-				peer->Init();
-				peer->server = true;
-				peer->connection = &this->connection;
-				peer->state = PEER_CONNECTED;
-
-				//send reply
-				char t[500];
-				NetMsg msg(500,t);
-				//msg.WriteInt(-1);
-				msg.WriteInt(NET_MAGIC_ID);//magic
-				msg.WriteByte(1);//success
-				msg.WriteShort(5007);//my port number, todo, changeme
-				peer->SendOOB(t, msg.cursize);
-
-				//connect
-				this->OnConnect(peer, (ConnectionRequest*)p.data);
-
-				this->peers[p.addr] = peer;
-				//this->threadmutex.unlock();
-
-				delete[] p.data;
-			}
-			else if (p.id == 2)
-			{
-				//this->threadmutex.lock();
-
-				netlogf("Client from %d.%d.%d.%d:%d Disconnected\n", p.addr.GetA(), p.addr.GetB(), p.addr.GetC(), p.addr.GetD(), p.addr.GetPort());
-
-				//disconnect
-				this->OnDisconnect(p.sender);
-
-				this->peers.erase(this->peers.find(p.addr));
-
-				delete p.sender;
-
-				//this->threadmutex.unlock();
-			}
-			else
-			{
-				size = p.size;
-				sender = p.sender;
-				peerincomingmutex.unlock();
-				return p.data;
-			}
-
-			if (this->incoming.size() == 0)
-			{
-				size = 0;
-				sender = 0;
-				peerincomingmutex.unlock();
-				return 0;
-			}
-		}
-		peerincomingmutex.unlock();
-	};
+	char* Receive(Peer*& sender, int& size);
 
 private:
 	//hook calls

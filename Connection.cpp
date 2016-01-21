@@ -242,7 +242,7 @@ void NetConnection::net_thread(void* data)
 		for (auto ii: connection->peers)
 		{
 			unsigned int lastsendtime = ii.second->lastsendtime;
-			if ((lastsendtime + NET_PING_INTERVAL < NetGetTime() || ii.second->unsent_acks > 16) && ii.second->state == PEER_CONNECTED)
+			if ((lastsendtime + NET_PING_INTERVAL < NetGetTime() || ii.second->unsent_acks > MaxUnsentAcks) && ii.second->state == PEER_CONNECTED)
 			{
 				//send keep alive packet, with acks
 				//if (ii.second->connection.unsent_acks > 16)
@@ -415,3 +415,75 @@ void NetConnection::Send(Peer* client, char* data, unsigned int size, bool OOB)
 
 	client->Send(data, size);
 }
+
+char* NetConnection::Receive(Peer*& sender, int& size)
+{
+	if (this->incoming.size() == 0)
+		return 0;//no messages to parse
+
+	peerincomingmutex.lock();
+	while (true)
+	{
+		TPacket p = this->incoming.front();
+		this->incoming.pop();
+
+		//ok, introduce callbacks here as different "packets"
+		if (p.id == 1)
+		{
+			//connect
+			Address sender = p.addr;
+
+			//this->peers[
+			netlogf("Client Connected from %d.%d.%d.%d:%d\n", sender.GetA(), sender.GetB(), sender.GetC(), sender.GetD(), sender.GetPort());
+			Peer* peer = new Peer;
+			peer->remoteaddr = sender;
+			peer->Init();
+			peer->server = true;
+			peer->connection = &this->connection;
+			peer->state = PEER_CONNECTED;
+
+			//send reply
+			char t[500];
+			NetMsg msg(500, t);
+			//msg.WriteInt(-1);
+			msg.WriteInt(NET_MAGIC_ID);//magic
+			msg.WriteByte(1);//success
+			msg.WriteShort(5007);//my port number, todo, changeme
+			peer->SendOOB(t, msg.cursize);
+
+			//connect
+			this->OnConnect(peer, (ConnectionRequest*)p.data);
+
+			this->peers[p.addr] = peer;
+
+			delete[] p.data;
+		}
+		else if (p.id == 2)
+		{
+			netlogf("Client from %d.%d.%d.%d:%d Disconnected\n", p.addr.GetA(), p.addr.GetB(), p.addr.GetC(), p.addr.GetD(), p.addr.GetPort());
+
+			//disconnect
+			this->OnDisconnect(p.sender);
+
+			this->peers.erase(this->peers.find(p.addr));
+
+			delete p.sender;
+		}
+		else
+		{
+			size = p.size;
+			sender = p.sender;
+			peerincomingmutex.unlock();
+			return p.data;
+		}
+
+		if (this->incoming.size() == 0)
+		{
+			size = 0;
+			sender = 0;
+			peerincomingmutex.unlock();
+			return 0;
+		}
+	}
+	peerincomingmutex.unlock();
+};

@@ -1,16 +1,6 @@
 #ifndef NETWORKING_HEADER
 #define NETWORKING_HEADER
 
-/*#define _CRTDBG_MAP_ALLOC
-#include <crtdbg.h>
-
-#ifdef _DEBUG   
-#ifndef DBG_NEW      
-#define DBG_NEW new ( _NORMAL_BLOCK , __FILE__ , __LINE__ )     
-#define new DBG_NEW   
-#endif
-#endif*/
-
 #ifdef _WIN32
 #ifndef INCLUDEDSOCK
 #define INCLUDEDSOCK
